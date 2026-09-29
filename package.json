@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-ntn-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Push the active Obsidian note to Notion via ntn",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^25.0.0",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.13.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.2"
+  }
+}

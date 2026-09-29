@@ -1,0 +1,9 @@
+{
+  "id": "ntn-sync",
+  "name": "Notion Sync (ntn)",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Push the active note to Notion using the official ntn CLI.",
+  "author": "Chris James",
+  "isDesktopOnly": true
+}
