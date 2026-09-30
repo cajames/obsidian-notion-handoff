@@ -5,7 +5,7 @@ export function parseNote(source: string) {
   const bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
   const text = source.slice(bom.length);
   const opening = /^---[ \t]*\r?\n/.exec(text);
-  if (!opening) return { body: text, notionId: null, frontmatter: null, bom };
+  if (!opening) return { body: text, notionId: null, notionWorkspace: null, frontmatter: null, bom };
 
   const remainder = text.slice(opening[0].length);
   const closing = /^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/gm.exec(remainder);
@@ -21,8 +21,13 @@ export function parseNote(source: string) {
     throw new Error('notion_id must be a string in YAML frontmatter.');
   }
   const notionId = value && isScalar(value) && typeof value.value === 'string' ? value.value.trim() || null : null;
+  const workspace = document.get('notion_workspace', true);
+  if (document.has('notion_workspace') && (!isScalar(workspace) || typeof workspace.value !== 'string' || !workspace.value.trim())) {
+    throw new Error('notion_workspace must be a non-empty string in YAML frontmatter.');
+  }
+  const notionWorkspace = workspace && isScalar(workspace) && typeof workspace.value === 'string' ? workspace.value.trim() : null;
   const end = opening[0].length + closing.index + closing[0].length;
-  return { body: text.slice(end), notionId, frontmatter: { raw, start: opening[0], end: closing[0], bodyOffset: end }, bom };
+  return { body: text.slice(end), notionId, notionWorkspace, frontmatter: { raw, start: opening[0], end: closing[0], bodyOffset: end }, bom };
 }
 
 export function writeNotionId(source: string, id: string) {

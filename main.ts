@@ -1,15 +1,20 @@
 import { Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import { createArgs, createPayload, markdownArgs, pushPage, runNtn } from './cli';
 import { parseNote, toNotionMarkdown, writeNotionId } from './note';
+import { resolveProfile } from './profiles';
 
-const DEFAULT_SETTINGS = { token: '', parentId: '', binary: 'ntn' };
+const DEFAULT_PROFILE = { name: 'Default', token: '', parentId: '' };
 
 export default class NtnSync extends Plugin {
-  settings = { ...DEFAULT_SETTINGS };
+  settings = { profiles: [{ ...DEFAULT_PROFILE }], binary: 'ntn' };
   private pushing = false;
 
   async onload() {
-    this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
+    const saved = await this.loadData();
+    this.settings = {
+      profiles: Array.isArray(saved?.profiles) && saved.profiles.length ? saved.profiles : [{ ...DEFAULT_PROFILE }],
+      binary: typeof saved?.binary === 'string' ? saved.binary : 'ntn',
+    };
     this.addSettingTab(new NtnSettings(this));
     this.addCommand({
       id: 'push-to-notion',
@@ -39,10 +44,11 @@ export default class NtnSync extends Plugin {
   private async push(file: TFile) {
     const source = await this.app.vault.read(file);
     const note = parseNote(source);
-    const token = this.settings.token.trim();
-    const parentId = this.settings.parentId.trim();
-    if (!token) throw new Error('Add a Notion API token in Notion Sync settings.');
-    if (!note.notionId && !parentId) throw new Error('Add a default parent page ID in Notion Sync settings.');
+    const profile = resolveProfile(this.settings.profiles, note.notionWorkspace);
+    const token = profile.token.trim();
+    const parentId = profile.parentId.trim();
+    if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Sync settings.`);
+    if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Sync settings.`);
     const binary = this.settings.binary.trim() || 'ntn';
     const run = (args: string[], stdin?: string) => runNtn(binary, token, args, stdin);
     // Preflight before any writes. ENOENT maps to an actionable install message.
@@ -71,20 +77,42 @@ class NtnSettings extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName('Notion API token')
-      .setDesc('Integration token, stored in Obsidian plugin data. Share the target pages with your integration.')
-      .addText((input) => {
-        input.inputEl.type = 'password';
-        input.setPlaceholder('secret_…').setValue(this.plugin.settings.token).onChange(async (value) => {
-          this.plugin.settings.token = value;
+    containerEl.createEl('h3', { text: 'Workspace profiles' });
+    containerEl.createEl('p', { text: 'The first profile is the default. Each token belongs to one Notion workspace.' });
+    this.plugin.settings.profiles.forEach((profile, index) => {
+      containerEl.createEl('h4', { text: `Profile ${index + 1}${index === 0 ? ' (default)' : ''}` });
+      new Setting(containerEl).setName('Name')
+        .addText((input) => input.setValue(profile.name).onChange(async (value) => {
+          profile.name = value;
           await this.plugin.saveData(this.plugin.settings);
+        }));
+      new Setting(containerEl).setName('Notion API token')
+        .setDesc('Stored in Obsidian plugin data. Share target pages with this integration.')
+        .addText((input) => {
+          input.inputEl.type = 'password';
+          input.setPlaceholder('secret_…').setValue(profile.token).onChange(async (value) => {
+            profile.token = value;
+            await this.plugin.saveData(this.plugin.settings);
+          });
         });
-      });
-    new Setting(containerEl).setName('Default parent page ID')
-      .setDesc('New pages are created under this Notion page.')
-      .addText((input) => input.setValue(this.plugin.settings.parentId).onChange(async (value) => {
-        this.plugin.settings.parentId = value;
+      new Setting(containerEl).setName('Default parent page ID')
+        .setDesc('New pages in this workspace are created under this page.')
+        .addText((input) => input.setValue(profile.parentId).onChange(async (value) => {
+          profile.parentId = value;
+          await this.plugin.saveData(this.plugin.settings);
+        }));
+      new Setting(containerEl).addButton((button) => button.setButtonText('Remove profile')
+        .setDisabled(this.plugin.settings.profiles.length === 1).onClick(async () => {
+          this.plugin.settings.profiles.splice(index, 1);
+          await this.plugin.saveData(this.plugin.settings);
+          this.display();
+        }));
+    });
+    new Setting(containerEl).setName('Add workspace profile')
+      .addButton((button) => button.setButtonText('Add profile').onClick(async () => {
+        this.plugin.settings.profiles.push({ name: `Workspace ${this.plugin.settings.profiles.length + 1}`, token: '', parentId: '' });
         await this.plugin.saveData(this.plugin.settings);
+        this.display();
       }));
     new Setting(containerEl).setName('Path to ntn binary')
       .setDesc('Optional. Leave blank to resolve ntn from PATH.')

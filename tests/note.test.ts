@@ -19,6 +19,19 @@ describe('frontmatter and body', () => {
     expect(parseNote(updated)).toMatchObject({ notionId: 'abc-123', body: '# Body\r\n' });
   });
 
+  it('preserves notion_workspace verbatim when writing notion_id', () => {
+    const source = '---\r\nnotion_workspace: "Work" # keep this\r\ntags: [work]\r\n---\r\nbody';
+    const updated = writeNotionId(source, 'abc-123');
+    expect(updated).toBe('---\r\nnotion_workspace: "Work" # keep this\r\ntags: [work]\r\nnotion_id: abc-123\r\n---\r\nbody');
+    expect(parseNote(updated)).toMatchObject({ notionWorkspace: 'Work', notionId: 'abc-123', body: 'body' });
+  });
+
+  it('distinguishes absent workspace from invalid value', () => {
+    expect(parseNote('body').notionWorkspace).toBeNull();
+    expect(() => parseNote('---\nnotion_workspace: []\n---\nbody')).toThrow('notion_workspace must be a non-empty string');
+    expect(() => parseNote('---\nnotion_workspace: \n---\nbody')).toThrow('notion_workspace must be a non-empty string');
+  });
+
   it('fills an empty notion_id without disturbing other fields', () => {
     expect(writeNotionId('---\ntags: a\nnotion_id: # pending\n---\nbody', 'abc-123'))
       .toBe('---\ntags: a\nnotion_id: abc-123 # pending\n---\nbody');
