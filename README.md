@@ -31,9 +31,16 @@ notion_id: 01234567-89ab-cdef-0123-456789abcdef
 
 The plugin checks for `ntn` before making API requests. Errors from the CLI appear in an Obsidian notice, including its exit code.
 
+## Attachments and Excalidraw
+
+- `![[photo.png]]`, `![[photo.png|Caption]]`, `![[document.pdf]]`, and `![Caption](relative/path.png)` upload vault files with `ntn files create --json`. Images, PDFs, audio, video, and other files (such as ZIP/DOCX) appear as Notion media/file blocks at the embed position. Numeric aliases like `|400x300` are display sizes, not captions. File references resolve relative to the note, from the vault root (`/Assets/file.png`), or via Obsidian's link resolver (including attachment folders). External `https://` images remain external links.
+- Single-file uploads are limited to **20 MiB** here; free Notion workspaces may reject uploads over **5 MiB**. Missing, too-large, or failed attachments become readable text in the page and produce a warning Notice. Files are uploaded once per push, even if embedded multiple times; no cross-push upload cache.
+- Excalidraw embeds (`![[drawing.excalidraw]]` or `![[drawing.excalidraw.md|Caption]]`) need **obsidian-excalidraw-plugin** installed and enabled. Its Excalidraw Automate API renders PNG for upload. If unavailable or export fails, the embed becomes plain text with a warning suggesting installation. Pushing a drawing file itself as a note is not supported.
+- Notion's enhanced Markdown format does not document a file-upload ID reference. The plugin uploads files, patches the page Markdown with standalone readable placeholders, then uses the blocks API to insert each media block immediately after its placeholder and delete the placeholder. If block insertion fails, the readable placeholder remains and a warning appears. Inline embeds inside complex Markdown (tables, nested lists) may lose surrounding formatting or fail placement; check the Notion page.
+
 ## Limitations
 
-- Text-only Markdown MVP: `[[wiki links]]` and `![[embeds]]` become readable plain text, not linked pages or uploaded attachments. Images are not uploaded. **Phase 2**: upload files with `ntn files create`, then link resulting uploads to Notion blocks.
+- Non-embed `[[wiki links]]` become readable plain text, not linked pages.
 - The Notion Markdown endpoint may not support every Markdown construct or Notion block type. Unsupported content might be simplified by Notion; verify important notes after pushing.
 - API calls for a note are sequential (Notion rate limit is roughly 3 requests/second). No batch, auto-sync, pull, or mobile support.
 - Tokens are stored in plain plugin settings data, not an OS keychain. Payloads go over stdin; the token never appears in arguments. On Windows, npm's `.cmd` shim is handled by `cross-spawn`.

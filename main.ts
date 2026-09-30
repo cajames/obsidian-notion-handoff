@@ -1,5 +1,9 @@
 import { Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import { createArgs, createPayload, markdownArgs, pushPage, runNtn } from './cli';
+import { isExcalidraw, parseUploadResult, prepareAttachments, uploadArgs } from './attachments';
+import { insertMedia } from './media';
+import { resolveAttachment } from './paths';
+import { renderExcalidraw } from './excalidraw';
 import { parseNote, toNotionMarkdown, writeNotionId } from './note';
 import { resolveProfile } from './profiles';
 
@@ -30,10 +34,15 @@ export default class NtnSync extends Plugin {
       new Notice('Open a Markdown note to push to Notion.');
       return;
     }
+    if (isExcalidraw(file.path)) {
+      new Notice('Excalidraw drawings cannot be pushed as notes; embed one in a Markdown note instead.');
+      return;
+    }
     this.pushing = true;
     try {
-      await this.push(file);
-      new Notice(`Pushed ${file.basename} to Notion.`);
+      const issues = await this.push(file);
+      new Notice(`Pushed ${file.basename} to Notion${issues.length ? ` with ${issues.length} attachment warning(s)` : ''}.`);
+      if (issues.length) new Notice(issues.join('\n'), 12000);
     } catch (error) {
       new Notice(`Notion push failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
     } finally {
@@ -50,10 +59,23 @@ export default class NtnSync extends Plugin {
     if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Sync settings.`);
     if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Sync settings.`);
     const binary = this.settings.binary.trim() || 'ntn';
-    const run = (args: string[], stdin?: string) => runNtn(binary, token, args, stdin);
+    const run = (args: string[], stdin?: string | Buffer) => runNtn(binary, token, args, stdin);
     // Preflight before any writes. ENOENT maps to an actionable install message.
     await run(['--version']);
-
+    const prepared = await prepareAttachments(note.body, file.path, {
+      resolve: (path, from) => resolveAttachment(path, from,
+        (candidate) => {
+          const match = this.app.vault.getAbstractFileByPath(candidate);
+          return match instanceof TFile ? match : null;
+        },
+        (link, source) => this.app.metadataCache.getFirstLinkpathDest(link, source)),
+      read: async (asset) => new Uint8Array(await this.app.vault.readBinary(asset as TFile)),
+      render: (asset) => renderExcalidraw(asset.path, (window as typeof window & {
+        ExcalidrawAutomate?: { reset: () => void; createPNG: (path: string) => Promise<Blob> };
+      }).ExcalidrawAutomate),
+      upload: async (bytes, name, mime) => parseUploadResult(await run(uploadArgs(name, mime), Buffer.from(bytes))),
+    });
+    const markdown = toNotionMarkdown(prepared.markdown);
     let pageId = note.notionId;
     if (!pageId) {
       const result = await run(createArgs(), JSON.stringify(createPayload(parentId, file.basename)));
@@ -64,10 +86,11 @@ export default class NtnSync extends Plugin {
       const newId = String(response.id);
       // Persist first: if markdown upload fails, retry will update rather than create a duplicate.
       await this.app.vault.process(file, (current) => writeNotionId(current, newId));
-      await run(markdownArgs(newId), JSON.stringify({ markdown: toNotionMarkdown(note.body) }));
-      return;
+      await run(markdownArgs(newId), JSON.stringify({ markdown }));
+      return [...prepared.issues, ...await insertMedia(run, newId, prepared.placements)];
     }
-    await pushPage(run, pageId, file.basename, toNotionMarkdown(note.body));
+    await pushPage(run, pageId, file.basename, markdown);
+    return [...prepared.issues, ...await insertMedia(run, pageId, prepared.placements)];
   }
 }
 
