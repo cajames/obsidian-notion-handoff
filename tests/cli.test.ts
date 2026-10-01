@@ -36,8 +36,8 @@ describe('ntn requests', () => {
 
   it('updates title then markdown sequentially, using JSON stdin', async () => {
     const calls: string[][] = [];
-    const run = vi.fn(async (args: string[], stdin?: string) => {
-      calls.push([args[1], stdin || '']);
+    const run = vi.fn(async (args: string[], stdin?: string | Buffer) => {
+      calls.push([args[1], String(stdin || '')]);
       return '';
     });
     await pushPage(run, 'abc', 'Renamed', 'body');
@@ -59,6 +59,16 @@ describe('ntn requests', () => {
       env: expect.objectContaining({ NOTION_API_TOKEN: 'secret', NOTION_KEYRING: '0' }),
       stdio: ['pipe', 'pipe', 'pipe'],
     }));
+  });
+
+  it('streams raw file bytes to ntn stdin without an argv payload', async () => {
+    const child = fakeChild(0);
+    const bytes: Buffer[] = [];
+    (child as typeof child & { stdin: PassThrough }).stdin.on('data', (chunk: Buffer) => bytes.push(chunk));
+    vi.mocked(spawn).mockReturnValue(child as never);
+    await runNtn('ntn', 'secret', ['files', 'create', '--json'], Buffer.from([0, 255, 10]));
+    expect(Buffer.concat(bytes)).toEqual(Buffer.from([0, 255, 10]));
+    expect(vi.mocked(spawn).mock.calls[0][1]).toEqual(['files', 'create', '--json']);
   });
 
   it('maps missing binary to install instructions', async () => {

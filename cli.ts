@@ -28,7 +28,7 @@ export function formatCliError(code: number | null, stderr: string) {
 }
 
 // Credentials go only in the environment; JSON goes only on stdin, not argv.
-export function runNtn(binary: string, token: string, args: string[], stdin?: string): Promise<string> {
+export function runNtn(binary: string, token: string, args: string[], stdin?: string | Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     // npm installs ntn as a .cmd shim on Windows; cross-spawn handles the shim.
     const launch = process.platform === 'win32' ? crossSpawn : spawn;
@@ -54,7 +54,7 @@ export function runNtn(binary: string, token: string, args: string[], stdin?: st
   });
 }
 
-export async function pushPage(run: (args: string[], stdin?: string) => Promise<string>, pageId: string, title: string, body: string) {
+export async function pushPage(run: (args: string[], stdin?: string | Buffer) => Promise<string>, pageId: string, title: string, body: string) {
   await run(titleArgs(pageId), JSON.stringify({ properties: titleProperty(title) }));
   await run(markdownArgs(pageId), JSON.stringify({ markdown: body }));
 }
