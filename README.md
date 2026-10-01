@@ -31,6 +31,13 @@ notion_id: 01234567-89ab-cdef-0123-456789abcdef
 
 The plugin checks for `ntn` before making API requests. Errors from the CLI appear in an Obsidian notice, including its exit code.
 
+## Note references
+
+- `[[Other Note]]` and `[[Other Note|alias]]` become inline Notion page mentions when the target Markdown note has a `notion_id` and resolves to the **same workspace profile**. Both notes without `notion_workspace` use the default profile. Only unambiguous note names are resolved; use an explicit path to distinguish duplicate names.
+- Missing, ambiguous, unreadable, unpushed, or cross-workspace note targets become `Other Note (link pending)` (or `alias (link pending)`). Wiki-links to non-note files stay plain text without the suffix.
+- The plugin reads the page's enhanced Markdown back after pushing mentions. If Notion rejects or fails to preserve them, it retries with **all mentions on that push** as pending text and shows a warning Notice; Notion does not identify the individual failed reference. This adds one API read for pushes with mentions. Verify important references in Notion.
+- **Note embeds are different:** `![[Other Note]]` still uploads the raw `.md` file as a Notion file attachment; it does not mention or transclude the page.
+
 ## Attachments and Excalidraw
 
 - `![[photo.png]]`, `![[photo.png|Caption]]`, `![[document.pdf]]`, and `![Caption](relative/path.png)` upload vault files with `ntn files create --json`. Images, PDFs, audio, video, and other files (such as ZIP/DOCX) appear as Notion media/file blocks at the embed position. Numeric aliases like `|400x300` are display sizes, not captions. File references resolve relative to the note, from the vault root (`/Assets/file.png`), or via Obsidian's link resolver (including attachment folders). External `https://` images remain external links.
@@ -40,7 +47,6 @@ The plugin checks for `ntn` before making API requests. Errors from the CLI appe
 
 ## Limitations
 
-- Non-embed `[[wiki links]]` become readable plain text, not linked pages.
 - The Notion Markdown endpoint may not support every Markdown construct or Notion block type. Unsupported content might be simplified by Notion; verify important notes after pushing.
 - API calls for a note are sequential (Notion rate limit is roughly 3 requests/second). No batch, auto-sync, pull, or mobile support.
 - Tokens are stored in plain plugin settings data, not an OS keychain. Payloads go over stdin; the token never appears in arguments. On Windows, npm's `.cmd` shim is handled by `cross-spawn`.

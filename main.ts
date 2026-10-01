@@ -1,5 +1,7 @@
 import { Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
-import { createArgs, createPayload, markdownArgs, pushPage, runNtn } from './cli';
+import { createArgs, createPayload, runNtn, titleArgs, titleProperty } from './cli';
+import { pushMarkdownWithMentions } from './mention-push';
+import { resolveReferences } from './references';
 import { isExcalidraw, parseUploadResult, prepareAttachments, uploadArgs } from './attachments';
 import { insertMedia } from './media';
 import { resolveAttachment } from './paths';
@@ -40,9 +42,10 @@ export default class NtnSync extends Plugin {
     }
     this.pushing = true;
     try {
-      const issues = await this.push(file);
-      new Notice(`Pushed ${file.basename} to Notion${issues.length ? ` with ${issues.length} attachment warning(s)` : ''}.`);
-      if (issues.length) new Notice(issues.join('\n'), 12000);
+      const { issues, demoted } = await this.push(file);
+      const warnings = [...issues, ...(demoted.length ? [`Note links demoted to pending: ${demoted.join(', ')} (mention import failed or could not be confirmed).`] : [])];
+      new Notice(`Pushed ${file.basename} to Notion${warnings.length ? ` with ${warnings.length} warning(s)` : ''}.`);
+      if (warnings.length) new Notice(warnings.join('\n'), 12000);
     } catch (error) {
       new Notice(`Notion push failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
     } finally {
@@ -62,13 +65,20 @@ export default class NtnSync extends Plugin {
     const run = (args: string[], stdin?: string | Buffer) => runNtn(binary, token, args, stdin);
     // Preflight before any writes. ENOENT maps to an actionable install message.
     await run(['--version']);
-    const prepared = await prepareAttachments(note.body, file.path, {
-      resolve: (path, from) => resolveAttachment(path, from,
-        (candidate) => {
-          const match = this.app.vault.getAbstractFileByPath(candidate);
-          return match instanceof TFile ? match : null;
-        },
-        (link, source) => this.app.metadataCache.getFirstLinkpathDest(link, source)),
+    const resolve = (path: string, from: string) => resolveAttachment(path, from,
+      (candidate) => {
+        const match = this.app.vault.getAbstractFileByPath(candidate);
+        return match instanceof TFile ? match : null;
+      },
+      (link, source) => this.app.metadataCache.getFirstLinkpathDest(link, source));
+    const links = await resolveReferences(note.body, file.path, profile, {
+      resolve,
+      markdownFiles: () => this.app.vault.getMarkdownFiles(),
+      read: (asset) => this.app.vault.read(asset as TFile),
+      profiles: this.settings.profiles,
+    });
+    const prepared = await prepareAttachments(links.body, file.path, {
+      resolve,
       read: async (asset) => new Uint8Array(await this.app.vault.readBinary(asset as TFile)),
       render: (asset) => renderExcalidraw(asset.path, (window as typeof window & {
         ExcalidrawAutomate?: { reset: () => void; createPNG: (path: string) => Promise<Blob> };
@@ -86,11 +96,12 @@ export default class NtnSync extends Plugin {
       const newId = String(response.id);
       // Persist first: if markdown upload fails, retry will update rather than create a duplicate.
       await this.app.vault.process(file, (current) => writeNotionId(current, newId));
-      await run(markdownArgs(newId), JSON.stringify({ markdown }));
-      return [...prepared.issues, ...await insertMedia(run, newId, prepared.placements)];
+      const demoted = await pushMarkdownWithMentions(run, newId, markdown, links.references);
+      return { issues: [...prepared.issues, ...await insertMedia(run, newId, prepared.placements)], demoted };
     }
-    await pushPage(run, pageId, file.basename, markdown);
-    return [...prepared.issues, ...await insertMedia(run, pageId, prepared.placements)];
+    await run(titleArgs(pageId), JSON.stringify({ properties: titleProperty(file.basename) }));
+    const demoted = await pushMarkdownWithMentions(run, pageId, markdown, links.references);
+    return { issues: [...prepared.issues, ...await insertMedia(run, pageId, prepared.placements)], demoted };
   }
 }
 
