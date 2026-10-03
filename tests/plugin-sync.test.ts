@@ -3,13 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { getChunks } from '@codemirror/merge';
 import NotionHandoff from '../src/main';
-import { api, mockNotion } from './helpers/notion';
+import { api, mockNotion, workspace } from './helpers/notion';
+import { parseNote, writeNotionBinding } from '../src/note';
 import { makeCheckpoint } from '../src/sync';
 import { fingerprint } from '../src/sync-remote';
 import { createTestApp, installDomHelpers, Modal, Notice, requestUrl } from './helpers/obsidian';
 
 const statePath = '.obsidian/plugins/notion-handoff/sync-state.json';
 const key = `${fingerprint('test-token').slice(0, 16)}:pageid`;
+const linksPath = '.obsidian/plugins/notion-handoff/note-links.json';
+const bound = (source: string, pageId = parseNote(source).notionId!) => writeNotionBinding(source, 'Default', 'workspace-default', pageId);
 
 function server(initial: string, blocks: unknown[] = []) {
   let remote = initial;
@@ -67,7 +70,7 @@ describe('plugin pull/push integration', () => {
     expect(Reflect.get(store.plugin, 'saveData')).not.toHaveBeenCalled();
     expect(store.plugin.settings).not.toHaveProperty('binary');
     await command(store.plugin, 'pullCurrentNote');
-    expect(store.files.get(store.note.path)).toBe(source.replace('Ending', 'Notion ending'));
+    expect(store.files.get(store.note.path)).toBe(bound(source.replace('Ending', 'Notion ending')));
     expect(Modal.opened).toEqual([]);
     expect([...store.files.keys()].filter((path) => path.includes('/backups/'))).toHaveLength(1);
     expect(JSON.parse(store.files.get(statePath)!)[key].local).toBe(base.replace('Ending', 'Notion ending'));
@@ -87,7 +90,7 @@ describe('plugin pull/push integration', () => {
     await command(store.plugin, 'pullCurrentNote');
     expect(store.files.get(legacyState)).toBe('Legacy checkpoint left untouched');
     expect(store.files.get(legacyOrigins)).toBe('Legacy provenance left untouched');
-    expect(store.files.get(store.note.path)).toBe(source);
+    expect(store.files.get(store.note.path)).toBe(bound(source));
     expect(store.files.has(statePath)).toBe(true);
     expect(store.app.vault.adapter.read).not.toHaveBeenCalledWith(legacyState);
     expect(store.app.vault.adapter.read).not.toHaveBeenCalledWith(legacyOrigins);
@@ -107,7 +110,9 @@ describe('plugin pull/push integration', () => {
     click('Save merged note');
     await pull;
     expect(store.binaries.size).toBe(1);
-    expect(store.files.get(store.note.path)).toMatch(/^---\nnotion_id: page-id\ntags: \[keep\]\n---\nNotion text/);
+    expect(parseNote(store.files.get(store.note.path)!)).toMatchObject({ notionId: 'page-id', notionWorkspace: 'Default', notionWorkspaceId: 'workspace-default' });
+    expect(store.files.get(store.note.path)).toContain('tags: [keep]');
+    expect(parseNote(store.files.get(store.note.path)!).body).toMatch(/^Notion text/);
     expect(store.files.get(store.note.path)).toContain('![[Attachments/notion-pageid-');
     expect(requestUrl).toHaveBeenCalledWith({ url, method: 'GET', throw: false });
     expect(JSON.parse(store.files.get(statePath)!)[key].bindings).toHaveLength(1);
@@ -190,12 +195,12 @@ describe('plugin pull/push integration', () => {
     click('Take Notion'); click('Keep Obsidian'); click('Save merged note');
     await pull;
     const chosen = base.replace('Intro', 'Local intro').replace('Area', 'Notion area');
-    expect(store.files.get(store.note.path)).toBe(prefix + chosen);
+    expect(store.files.get(store.note.path)).toBe(bound(prefix + chosen));
     expect(JSON.parse(store.files.get(statePath)!)[key].local).toBe(remote);
     expect([...store.files.keys()].filter((path) => path.includes('/backups/'))).toHaveLength(1);
     notion.edit(remote.replace('Last line', 'Notion last line'));
     await command(store.plugin, 'pullCurrentNote');
-    expect(store.files.get(store.note.path)).toBe(prefix + chosen.replace('Last line', 'Notion last line'));
+    expect(store.files.get(store.note.path)).toBe(bound(prefix + chosen.replace('Last line', 'Notion last line')));
     expect(Modal.opened).toHaveLength(1);
     expect(api.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
   });
@@ -261,7 +266,7 @@ describe('plugin pull/push integration', () => {
     expect(Modal.opened).toHaveLength(1);
     notion.edit('Notion change after push');
     await command(store.plugin, 'pullCurrentNote');
-    expect(store.files.get(store.note.path)).toBe(source.replace('Local edits', 'Notion change after push'));
+    expect(store.files.get(store.note.path)).toBe(bound(source.replace('Local edits', 'Notion change after push')));
     expect(Modal.opened).toHaveLength(1);
   });
 
@@ -380,7 +385,7 @@ describe('plugin pull/push integration', () => {
     expect(changed).not.toContain('# Note');
     expect(changed).not.toContain('![[attachments/');
     click('Keep Obsidian'); click('Save merged note'); await pull;
-    expect(store.files.get(store.note.path)).toBe(source);
+    expect(store.files.get(store.note.path)).toBe(bound(source));
     expect(store.binaries.size).toBe(0);
     const origins = JSON.parse(store.files.get('.obsidian/plugins/notion-handoff/media-origins.json')!)[key];
     expect(origins.map((origin: { original: string }) => origin.original)).toEqual([tldraw, excalidraw]);
@@ -390,7 +395,7 @@ describe('plugin pull/push integration', () => {
     blocks[0].last_edited_time = 'v2';
     notion.edit(`# Note\nRemote test\n![Changed caption](${urls[0]})\n![Excalidraw](${urls[1]})`);
     await command(store.plugin, 'pullCurrentNote');
-    expect(store.files.get(store.note.path)).toBe(source);
+    expect(store.files.get(store.note.path)).toBe(bound(source));
     expect(Modal.opened).toHaveLength(1);
     expect(vi.mocked(requestUrl).mock.calls.every(([request]) => (request as any).url.startsWith('https://api.notion.com/'))).toBe(true);
     expect(render).not.toHaveBeenCalled();
@@ -414,11 +419,11 @@ describe('plugin pull/push integration', () => {
     });
     const store = await setup('New note');
     await command(store.plugin, 'pushCurrentNote');
-    expect(store.files.get(store.note.path)).toBe('---\nnotion_id: created-page\n---\nNew note');
+    expect(store.files.get(store.note.path)).toBe(bound('New note', 'created-page'));
     expect(notion.read()).toBe('New note');
     notion.edit('Added in Notion');
     await command(store.plugin, 'pullCurrentNote');
-    expect(store.files.get(store.note.path)).toBe('---\nnotion_id: created-page\n---\nAdded in Notion');
+    expect(store.files.get(store.note.path)).toBe(bound('Added in Notion', 'created-page'));
     expect(Modal.opened).toEqual([]);
   });
 
@@ -461,8 +466,10 @@ describe('plugin pull/push integration', () => {
     expect(creations).toHaveLength(1);
     expect(creations[0][0].body.parent.page_id).toBe('work-parent');
     expect(api.mock.calls.some(([request]) => request.path.includes('/file_uploads/') && request.path.endsWith('/send'))).toBe(true);
-    expect(api.mock.calls.some(([request]) => request.path === '/v1/pages/work-page' && request.method === 'PATCH')).toBe(true);
-    expect(store.files.get(store.note.path)).toContain('notion_id: work-page');
+    expect(api.mock.calls.some(([request]) => request.path === '/v1/pages/work-page' && request.method === 'PATCH')).toBe(false);
+    expect(api.mock.calls.some(([request]) => request.path === '/v1/pages/work-page/markdown' && request.method === 'PATCH')).toBe(true);
+    expect(parseNote(store.files.get(store.note.path)!).notionId).toBe('work-page');
+    expect(workspace.mock.calls.every(([token]) => token === 'work-token')).toBe(true);
   });
 
   it('persists a created ID before Markdown failure so retry does not duplicate the page', async () => {
@@ -479,7 +486,8 @@ describe('plugin pull/push integration', () => {
     });
     const store = await setup('New note');
     await command(store.plugin, 'pushCurrentNote');
-    expect(store.files.get(store.note.path)).toContain('notion_id: created-page');
+    expect(parseNote(store.files.get(store.note.path)!)).toMatchObject({ notionId: 'created-page', notionWorkspace: 'Default', notionWorkspaceId: 'workspace-default' });
+    expect(JSON.parse(store.files.get(linksPath)!)[store.note.path]).toMatchObject({ workspaceId: 'workspace-default', pageId: 'created-page' });
     expect(Notice.messages.at(-1)).toContain('Network failure');
     await command(store.plugin, 'pushCurrentNote');
     expect(notion.read()).toBe('New note');

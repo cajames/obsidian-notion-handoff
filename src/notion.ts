@@ -8,7 +8,7 @@ export function notionClient(token: string, timeoutMs = 60_000) {
   return new Client({
     auth: token,
     notionVersion: NOTION_VERSION,
-    // Tokens stay in this local desktop plugin, not a public web page.
+    // Tokens stay in the local plugin, not a public web page.
     dangerouslyAllowBrowser: true,
     timeoutMs,
     logger: () => {},

@@ -1,7 +1,7 @@
-import { Component, Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl } from 'obsidian';
+import { Component, Notice, Plugin, TFile, requestUrl } from 'obsidian';
 import { posix } from 'path-browserify';
 import { randomId } from './ids';
-import { createPayload, notionClient, titleProperty, uploadFile } from './notion';
+import { createPayload, notionClient, uploadFile } from './notion';
 import { pushMarkdownWithMentions } from './mention-push';
 import { resolveReferences } from './references';
 import { isExcalidraw, parseEmbeds, prepareAttachments } from './attachments';
@@ -9,27 +9,36 @@ import { insertMedia } from './media';
 import { imageImportFolder, resolveAttachment } from './paths';
 import { renderExcalidraw } from './excalidraw';
 import { isTldraw, renderTldraw } from './tldraw';
-import { parseNote, toNotionMarkdown, writeNotionId } from './note';
+import { parseNote, toNotionMarkdown, writeNotionBinding } from './note';
 import { resolveProfile } from './profiles';
 import { readRemote, fingerprint, canonicalReferences, remoteEmbeds, urlIdentity } from './sync-remote';
 import { applyPull, makeCheckpoint, parseCheckpoints, restoreBindings } from './sync';
 import { prepareRemote } from './pull-images';
-import { confirmPush, reviewPull } from './sync-modals';
+import { confirmPush, pickWorkspace, reviewPull } from './sync-modals';
 import { combineOrigins, makeOrigin, parseOrigins } from './media-origins';
+import HandoffSettings from './settings';
+import { uiStyles } from './ui-styles';
+import { parseNoteLinks, verifiedWorkspace } from './note-links';
 
-const DEFAULT_PROFILE = { name: 'Default', token: '', parentId: '' };
+const EMPTY_PROFILE = { name: 'Workspace 1', token: '', parentId: '' };
 
 export default class NotionHandoff extends Plugin {
-  settings = { profiles: [{ ...DEFAULT_PROFILE }], imageImportFolder: '' };
+  settings = { profiles: [{ ...EMPTY_PROFILE }], imageImportFolder: '' };
   private syncing = false;
   private checkpoints: Record<string, ReturnType<typeof makeCheckpoint>> = {};
   private origins: Record<string, ReturnType<typeof makeOrigin>[]> = {};
   private syncReady = true;
+  private noteLinks = parseNoteLinks('{}');
 
   async onload() {
+    const style = document.createElement('style');
+    style.dataset.notionHandoff = '';
+    style.textContent = uiStyles;
+    document.head.append(style);
+    this.register(() => style.remove());
     const saved = await this.loadData();
     this.settings = {
-      profiles: Array.isArray(saved?.profiles) && saved.profiles.length ? saved.profiles : [{ ...DEFAULT_PROFILE }],
+      profiles: Array.isArray(saved?.profiles) && saved.profiles.length ? saved.profiles : [{ ...EMPTY_PROFILE }],
       imageImportFolder: typeof saved?.imageImportFolder === 'string' ? saved.imageImportFolder : '',
     };
     try {
@@ -37,6 +46,8 @@ export default class NotionHandoff extends Plugin {
       if (await this.app.vault.adapter.exists(path)) this.checkpoints = parseCheckpoints(await this.app.vault.adapter.read(path));
       const origins = this.originPath();
       if (await this.app.vault.adapter.exists(origins)) this.origins = parseOrigins(await this.app.vault.adapter.read(origins));
+      const links = this.noteLinkPath();
+      if (await this.app.vault.adapter.exists(links)) this.noteLinks = parseNoteLinks(await this.app.vault.adapter.read(links));
     } catch (error) {
       this.syncReady = false;
       new Notice(`Sync disabled: ${error instanceof Error ? error.message : String(error)}`, 12000);
@@ -55,7 +66,7 @@ export default class NotionHandoff extends Plugin {
   }
 
   private activeNote() {
-    if (!this.syncReady) { new Notice('Repair sync-state.json / media-origins.json and reload Notion Handoff before syncing.'); return null; }
+    if (!this.syncReady) { new Notice('Repair sync-state.json / media-origins.json / note-links.json and reload Notion Handoff before syncing.'); return null; }
     if (this.syncing) { new Notice('A Notion sync is already in progress.'); return null; }
     const file = this.app.workspace.getActiveFile();
     if (!(file instanceof TFile) || file.extension !== 'md') {
@@ -93,6 +104,48 @@ export default class NotionHandoff extends Plugin {
 
   private originPath() {
     return `${posix.dirname(this.statePath())}/media-origins.json`;
+  }
+
+  private noteLinkPath() {
+    return `${posix.dirname(this.statePath())}/note-links.json`;
+  }
+
+  private async chooseProfile(note: ReturnType<typeof parseNote>, noteName: string) {
+    let workspace = note.notionWorkspace;
+    if (!workspace && this.settings.profiles.length > 1) {
+      workspace = await pickWorkspace(this.app, this.settings.profiles.map((profile) => profile.name.trim()), noteName);
+      if (!workspace) return null;
+    }
+    return resolveProfile(this.settings.profiles, workspace);
+  }
+
+  private async saveNoteLink(file: TFile, workspaceName: string, workspaceId: string, pageId: string) {
+    const next = { ...this.noteLinks, [file.path]: { notePath: file.path, workspaceName, workspaceId, pageId } };
+    await this.app.vault.adapter.write(this.noteLinkPath(), JSON.stringify(next, null, 2));
+    this.noteLinks = next;
+  }
+
+  private async bindPushedNote(file: TFile, source: string, workspaceName: string, workspaceId: string, pageId: string, created = false) {
+    let changed = false;
+    let bound = writeNotionBinding(source, workspaceName, workspaceId, pageId);
+    try {
+      if (bound !== source) await this.app.vault.process(file, (current) => {
+        changed = current !== source;
+        if (changed && !created) throw new Error('The note changed while binding its workspace. Push again with the latest edits.');
+        bound = writeNotionBinding(current, workspaceName, workspaceId, pageId);
+        return bound;
+      });
+    } catch (error) {
+      // A created page must remain recoverable even if the note cannot be edited.
+      if (created) {
+        await this.saveNoteLink(file, workspaceName, workspaceId, pageId);
+        throw new Error(`Page ${pageId} was created, but could not be linked in the note. Its binding was saved; restore its IDs before retrying. ${error instanceof Error ? error.message : String(error)}`);
+      }
+      throw error;
+    }
+    await this.saveNoteLink(file, workspaceName, workspaceId, pageId);
+    if (changed) throw new Error('The note changed during page creation. Its page and workspace IDs were saved; push again with the latest edits.');
+    return bound;
   }
 
   private async saveOrigins(key: string, added: ReturnType<typeof makeOrigin>[]) {
@@ -139,10 +192,14 @@ export default class NotionHandoff extends Plugin {
       const source = await this.app.vault.read(file);
       const note = parseNote(source);
       if (!note.notionId) throw new Error('This note has no notion_id. Push it first, or add the target page ID.');
-      const profile = resolveProfile(this.settings.profiles, note.notionWorkspace);
+      const profile = await this.chooseProfile(note, file.basename);
+      if (!profile) { new Notice('Notion pull cancelled.'); return; }
+      const workspaceName = profile.name.trim();
       const token = profile.token.trim();
       if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
       const client = notionClient(token);
+      const workspaceId = await verifiedWorkspace(client, note, this.noteLinks[file.path]);
+      const boundSource = writeNotionBinding(source, workspaceName, workspaceId, note.notionId);
       const remote = await readRemote(client, note.notionId);
       const key = this.syncKey(token, note.notionId);
       const checkpoint = this.checkpoints[key] ?? null;
@@ -150,7 +207,7 @@ export default class NotionHandoff extends Plugin {
         const source = this.drawingSource(binding.local, file.path);
         return source && !(this.origins[key] ?? []).some((origin) => origin.drawing && origin.source === source);
       });
-      if (checkpoint && remote.fingerprint === checkpoint.observed && !needsOrigins) {
+      if (checkpoint && remote.fingerprint === checkpoint.observed && !needsOrigins && boundSource === source && this.noteLinks[file.path]) {
         new Notice(`${file.basename} is up to date; local edits kept.`);
         return;
       }
@@ -160,6 +217,7 @@ export default class NotionHandoff extends Plugin {
         markdownFiles: () => this.app.vault.getMarkdownFiles(),
         read: (asset) => this.app.vault.read(asset as TFile),
         profiles: this.settings.profiles,
+        workspaceId,
         isTldraw: (asset) => this.isTldraw(asset),
       });
       const bindings = [...(checkpoint?.bindings ?? []), ...links.bindings.map((binding) => ({ ...binding, remote: canonicalReferences(binding.remote) }))];
@@ -182,6 +240,7 @@ export default class NotionHandoff extends Plugin {
       });
       const result = await applyPull(source, prepared.markdown, remote.fingerprint, checkpoint, prepared.bindings, prepared.files, {
         read: () => this.app.vault.read(file),
+        prepareNote: (updated) => writeNotionBinding(updated, workspaceName, workspaceId, note.notionId!),
         review: (local, notion, merged, firstPull) => reviewPull(this.app, local, notion, merged, firstPull),
         backup: async (original) => {
           const folder = `${posix.dirname(this.statePath())}/backups`;
@@ -200,6 +259,7 @@ export default class NotionHandoff extends Plugin {
           });
         },
         saveCheckpoint: async (next) => {
+          await this.saveNoteLink(file, workspaceName, workspaceId, note.notionId!);
           await this.saveOrigins(key, prepared.origins);
           await this.saveCheckpoint(key, next);
         },
@@ -258,12 +318,15 @@ export default class NotionHandoff extends Plugin {
   private async push(file: TFile) {
     const source = await this.app.vault.read(file);
     const note = parseNote(source);
-    const profile = resolveProfile(this.settings.profiles, note.notionWorkspace);
+    const profile = await this.chooseProfile(note, file.basename);
+    if (!profile) return null;
+    const workspaceName = profile.name.trim();
     const token = profile.token.trim();
     const parentId = profile.parentId.trim();
     if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
     if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Handoff settings.`);
     const client = notionClient(token);
+    const workspaceId = await verifiedWorkspace(client, note, this.noteLinks[file.path]);
     let checkedFingerprint = '';
     if (note.notionId) {
       const remote = await readRemote(client, note.notionId);
@@ -279,6 +342,7 @@ export default class NotionHandoff extends Plugin {
       markdownFiles: () => this.app.vault.getMarkdownFiles(),
       read: (asset) => this.app.vault.read(asset as TFile),
       profiles: this.settings.profiles,
+      workspaceId,
       isTldraw: (asset) => this.isTldraw(asset),
     });
     const prepared = await prepareAttachments(links.body, file.path, {
@@ -298,16 +362,18 @@ export default class NotionHandoff extends Plugin {
     }
     if (await this.app.vault.read(file) !== source) throw new Error('The note changed while preparing the push. Push again with the latest edits.');
     let pageId = note.notionId;
+    let boundSource = source;
     if (!pageId) {
-      const response = await client.pages.create(createPayload(parentId, file.basename));
+      const response = await client.pages.create(createPayload(parentId, note.title ?? file.basename));
       if (typeof response?.id !== 'string' || !response.id) throw new Error('Notion did not return a page ID. Check Notion before retrying creation.');
       const newId = String(response.id);
-      // Persist first: if markdown upload fails, retry will update rather than create a duplicate.
-      await this.app.vault.process(file, (current) => writeNotionId(current, newId));
+      // Persist both IDs before content writes so failed pushes never duplicate pages.
+      boundSource = await this.bindPushedNote(file, source, workspaceName, workspaceId, newId, true);
       pageId = newId;
     } else {
-      await client.pages.update({ page_id: pageId, properties: titleProperty(file.basename) });
+      boundSource = await this.bindPushedNote(file, source, workspaceName, workspaceId, pageId);
     }
+    if (await this.app.vault.read(file) !== boundSource) throw new Error('The note changed before publishing. Push again with the latest edits.');
     const demoted = await pushMarkdownWithMentions(client, pageId, markdown, links.references);
     const inserted: ReturnType<typeof makeOrigin>[] = [];
     const issues = [...prepared.issues, ...await insertMedia(client, pageId, prepared.placements, (placement, id) => {
@@ -333,57 +399,5 @@ export default class NotionHandoff extends Plugin {
       issues.push(`Page pushed, but no new sync checkpoint was saved: ${error instanceof Error ? error.message : String(error)}. Pull may require review.`);
     }
     return { issues, demoted };
-  }
-}
-
-class HandoffSettings extends PluginSettingTab {
-  constructor(private plugin: NotionHandoff) { super(plugin.app, plugin); }
-
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    new Setting(containerEl).setName('Imported images folder')
-      .setDesc('Leave blank to use Obsidian’s attachment location. Or set a vault-relative folder, such as Attachments/Notion. Use / for the vault root. Existing imports are not moved.')
-      .addText((input) => input.setPlaceholder('Obsidian attachment location').setValue(this.plugin.settings.imageImportFolder).onChange(async (value) => {
-        this.plugin.settings.imageImportFolder = value;
-        await this.plugin.saveData(this.plugin.settings);
-      }));
-    containerEl.createEl('h3', { text: 'Workspace profiles' });
-    containerEl.createEl('p', { text: 'The first profile is the default. Each token belongs to one Notion workspace.' });
-    this.plugin.settings.profiles.forEach((profile, index) => {
-      containerEl.createEl('h4', { text: `Profile ${index + 1}${index === 0 ? ' (default)' : ''}` });
-      new Setting(containerEl).setName('Name')
-        .addText((input) => input.setValue(profile.name).onChange(async (value) => {
-          profile.name = value;
-          await this.plugin.saveData(this.plugin.settings);
-        }));
-      new Setting(containerEl).setName('Notion API token')
-        .setDesc('Stored in Obsidian plugin data. Share target pages with this integration.')
-        .addText((input) => {
-          input.inputEl.type = 'password';
-          input.setPlaceholder('secret_…').setValue(profile.token).onChange(async (value) => {
-            profile.token = value;
-            await this.plugin.saveData(this.plugin.settings);
-          });
-        });
-      new Setting(containerEl).setName('Default parent page ID')
-        .setDesc('New pages in this workspace are created under this page.')
-        .addText((input) => input.setValue(profile.parentId).onChange(async (value) => {
-          profile.parentId = value;
-          await this.plugin.saveData(this.plugin.settings);
-        }));
-      new Setting(containerEl).addButton((button) => button.setButtonText('Remove profile')
-        .setDisabled(this.plugin.settings.profiles.length === 1).onClick(async () => {
-          this.plugin.settings.profiles.splice(index, 1);
-          await this.plugin.saveData(this.plugin.settings);
-          this.display();
-        }));
-    });
-    new Setting(containerEl).setName('Add workspace profile')
-      .addButton((button) => button.setButtonText('Add profile').onClick(async () => {
-        this.plugin.settings.profiles.push({ name: `Workspace ${this.plugin.settings.profiles.length + 1}`, token: '', parentId: '' });
-        await this.plugin.saveData(this.plugin.settings);
-        this.display();
-      }));
   }
 }

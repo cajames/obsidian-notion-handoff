@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNote, toNotionMarkdown, writeNotionId } from '../src/note';
+import { parseNote, toNotionMarkdown, writeNotionId, writeNotionBinding } from '../src/note';
 
 describe('frontmatter and body', () => {
   it('extracts body and notion_id without leaking frontmatter', () => {
@@ -29,7 +29,7 @@ describe('frontmatter and body', () => {
   it('distinguishes absent workspace from invalid value', () => {
     expect(parseNote('body').notionWorkspace).toBeNull();
     expect(() => parseNote('---\nnotion_workspace: []\n---\nbody')).toThrow('notion_workspace must be a non-empty string');
-    expect(() => parseNote('---\nnotion_workspace: \n---\nbody')).toThrow('notion_workspace must be a non-empty string');
+    expect(parseNote('---\nnotion_workspace: \n---\nbody').notionWorkspace).toBeNull();
   });
 
   it('fills an empty notion_id without disturbing other fields', () => {
@@ -41,6 +41,22 @@ describe('frontmatter and body', () => {
     expect(() => writeNotionId('---\nnotion_id: old\n---\nbody', 'new')).toThrow('already has');
     expect(() => parseNote('---\nnotion_id: [')).toThrow('Unclosed');
     expect(() => parseNote('---\ninvalid: [\n---\nbody')).toThrow('Invalid YAML');
+  });
+
+  it('pins all binding fields while preserving YAML, comments, BOM, CRLF and body', () => {
+    const source = '\uFEFF---\r\ntitle: "Keep this" # comment\r\nnotion_workspace: # choose\r\nnotion_workspace_id: null # pending\r\nnotion_id: # pending\r\ntags:\r\n  - client\r\n---\r\n# Body\r\n';
+    const result = writeNotionBinding(source, 'Client "A"', 'workspace-id', 'page-id');
+    expect(result).toBe('\uFEFF---\r\ntitle: "Keep this" # comment\r\nnotion_workspace: "Client \\"A\\"" # choose\r\nnotion_workspace_id: "workspace-id" # pending\r\nnotion_id: "page-id" # pending\r\ntags:\r\n  - client\r\n---\r\n# Body\r\n');
+    expect(parseNote(result)).toMatchObject({ notionWorkspace: 'Client "A"', notionWorkspaceId: 'workspace-id', notionId: 'page-id' });
+    expect(writeNotionBinding(result, 'Client "A"', 'workspace-id', 'page-id')).toBe(result);
+  });
+
+  it('refuses to silently replace any existing note binding', () => {
+    const source = writeNotionBinding('Body', 'Client', 'workspace-id', 'page-id');
+    expect(() => writeNotionBinding(source, 'Other', 'workspace-id', 'page-id')).toThrow('workspace changed');
+    expect(() => writeNotionBinding(source, 'Client', 'other-id', 'page-id')).toThrow('saved workspace ID');
+    expect(() => writeNotionBinding(source, 'Client', 'workspace-id', 'other-page')).toThrow('saved page ID');
+    expect(() => parseNote('---\nnotion_workspace_id: []\n---\nBody')).toThrow('notion_workspace_id must be a string');
   });
 
   it('preserves code examples while converting ordinary wiki links', () => {

@@ -7,8 +7,11 @@ const profiles = [
 ];
 
 describe('profile resolution', () => {
-  it('uses the first profile by default', () => {
-    expect(resolveProfile(profiles, null)).toBe(profiles[0]);
+  it('only auto-selects when exactly one workspace exists', () => {
+    expect(resolveProfile([profiles[1]], null)).toBe(profiles[1]);
+    expect(() => resolveProfile(profiles, null)).toThrow('Choose a workspace');
+    expect(() => resolveProfile([...profiles].reverse(), null)).toThrow('Choose a workspace');
+    expect(() => resolveProfile([{ ...profiles[0], name: '' }], null)).toThrow('workspace name is required');
   });
 
   it('selects an explicit profile with its token and parent', () => {
@@ -24,7 +27,7 @@ describe('profile resolution', () => {
     expect(() => resolveProfile(profiles, 'Other')).toThrow('Notion workspace "Other" has no matching profile');
   });
 
-  it('rejects ambiguous names and missing default', () => {
+  it('rejects ambiguous names and missing workspaces', () => {
     expect(() => resolveProfile([...profiles, { ...profiles[1], name: 'work' }], 'Work')).toThrow('Multiple profiles');
     expect(() => resolveProfile([], null)).toThrow('Add a workspace profile');
   });

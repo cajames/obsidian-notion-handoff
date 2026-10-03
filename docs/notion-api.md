@@ -6,6 +6,16 @@ SDK fetch uses Obsidian `requestUrl` with `throw: false`, preserving status, res
 
 Uploads use the single-part File Uploads flow: create with filename and content type, send multipart `file`, retrieve to verify `uploaded`, then append a media block. Both send and verification must confirm the same upload ID. The 20 MiB limit applies before creating an upload. Media placeholders are deleted only after an inserted block ID is confirmed.
 
+## Workspace identity and note bindings
+
+There is no default workspace. A note’s `notion_workspace` selects a configured profile. Missing or blank names auto-select only when one profile exists; otherwise Push and Pull open a cancellable picker with the first named workspace preselected. Confirmation is still required before any API calls. Reordering profiles never changes a note’s destination. Named profiles must resolve uniquely; unassigned legacy wiki-links remain pending rather than guessing from list order.
+
+Before page reads or uploads, `users.me` must return a bot workspace ID. It is checked against `notion_workspace_id` and any saved local association. Missing IDs or mismatches stop sync. Token rotation is allowed only within the pinned workspace; checkpoints remain token-isolated.
+
+Each bound note keeps its workspace name, actual workspace ID and page ID in frontmatter. `note-links.json` separately records its vault path, workspace name, workspace ID and page ID. New page bindings are saved immediately after creation, before content replacement. If note write-back fails, the local mapping provides recovery without replaying page creation. A binding storage failure stops content writes. Pull saves bindings only after review succeeds, with a backup for frontmatter changes; cancellation saves nothing. Moving a note preserves its frontmatter identity and records its new path on the next sync. Conflicting associations must be repaired explicitly, not silently rebound.
+
+New pages use a non-empty string `title` frontmatter property, otherwise the current filename without its extension. Existing pages receive content updates only; Push never updates page-title properties, and Pull never renames files or rewrites their local titles.
+
 ## Bounded retries
 
 The SDK makes at most three attempts per API call (two retries):

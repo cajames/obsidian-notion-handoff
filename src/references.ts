@@ -5,6 +5,7 @@ import { isTldraw } from './tldraw';
 import { parseNote } from './note';
 import { codeRanges } from './markdown';
 import { resolveProfile } from './profiles';
+import { sameId } from './note-links';
 
 const NOTE_ID = /^(?:[a-f\d]{32}|[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})$/i;
 
@@ -27,6 +28,7 @@ export async function resolveReferences(body: string, from: string, currentProfi
   read: (file: { path: string }) => Promise<string>;
   isTldraw?: (file: { path: string }) => boolean;
   profiles: { name: string; token: string; parentId: string }[];
+  workspaceId?: string;
 }) {
   const references: { token: string; mention: string; pending: string; label: string; id: string }[] = [];
   const bindings: { remote: string; local: string }[] = [];
@@ -67,8 +69,10 @@ export async function resolveReferences(body: string, from: string, currentProfi
     if (target) {
       try {
         const note = parseNote(await deps.read(target));
-        if (note.notionId && NOTE_ID.test(note.notionId) &&
-          resolveProfile(deps.profiles, note.notionWorkspace) === currentProfile) id = note.notionId;
+        const sameWorkspace = note.notionWorkspaceId && deps.workspaceId
+          ? sameId(note.notionWorkspaceId, deps.workspaceId)
+          : !!note.notionWorkspace && resolveProfile(deps.profiles, note.notionWorkspace) === currentProfile;
+        if (note.notionId && NOTE_ID.test(note.notionId) && sameWorkspace) id = note.notionId;
       } catch { /* Unreadable or invalid frontmatter: link pending. */ }
     }
     const pending = `${title} (link pending)`;

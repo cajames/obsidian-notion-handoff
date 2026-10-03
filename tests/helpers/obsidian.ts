@@ -64,6 +64,9 @@ export class Plugin {
   constructor(public app = createTestApp().app, public manifest = { id: 'notion-handoff', dir: '.obsidian/plugins/notion-handoff' }) {}
   addCommand(command: (typeof this.commands)[number]) { this.commands.push(command); }
   addSettingTab(_tab: unknown) {}
+  private disposers: (() => void)[] = [];
+  register(callback: () => void) { this.disposers.push(callback); }
+  unload() { for (const dispose of this.disposers.splice(0)) dispose(); }
 }
 
 export class Component {
@@ -94,20 +97,65 @@ export class Modal {
   close() { if (!this.opened) return; this.opened = false; this.onClose(); this.contentEl.remove(); }
 }
 
-class Button {
+export class ButtonComponent {
   buttonEl = document.createElement('button');
-  constructor(container: HTMLElement) { container.append(this.buttonEl); }
+  constructor(container: HTMLElement) { this.buttonEl.type = 'button'; container.append(this.buttonEl); }
   setButtonText(text: string) { this.buttonEl.textContent = text; return this; }
-  setCta() { return this; }
-  setWarning() { return this; }
+  setCta() { this.buttonEl.classList.add('mod-cta'); return this; }
+  setWarning() { this.buttonEl.classList.add('mod-warning'); return this; }
   setDisabled(disabled: boolean) { this.buttonEl.disabled = disabled; return this; }
-  onClick(callback: () => void) { this.buttonEl.addEventListener('click', callback); return this; }
+  setIcon(name: string) { this.buttonEl.dataset.icon = name; this.buttonEl.textContent = name === 'arrow-up' ? '↑' : '↓'; return this; }
+  setTooltip(text: string) { this.buttonEl.title = text; return this; }
+  onClick(callback: (event: MouseEvent) => void) { this.buttonEl.addEventListener('click', callback); return this; }
+}
+
+class TextComponent {
+  inputEl = document.createElement('input');
+  constructor(container: HTMLElement) { this.inputEl.type = 'text'; container.append(this.inputEl); }
+  setPlaceholder(value: string) { this.inputEl.placeholder = value; return this; }
+  setValue(value: string) { this.inputEl.value = value; return this; }
+  onChange(callback: (value: string) => void) { this.inputEl.addEventListener('input', () => callback(this.inputEl.value)); return this; }
+}
+
+class DropdownComponent {
+  selectEl = document.createElement('select');
+  constructor(container: HTMLElement) { container.append(this.selectEl); }
+  addOption(value: string, label: string) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    this.selectEl.append(option);
+    return this;
+  }
+  setValue(value: string) { this.selectEl.value = value; return this; }
+  onChange(callback: (value: string) => void) { this.selectEl.addEventListener('change', () => callback(this.selectEl.value)); return this; }
 }
 
 export class Setting {
-  constructor(private container: HTMLElement) {}
-  addButton(callback: (button: Button) => void) { callback(new Button(this.container)); return this; }
+  settingEl = document.createElement('div');
+  nameEl = document.createElement('div');
+  descEl = document.createElement('div');
+  controlEl = document.createElement('div');
+  constructor(container: HTMLElement) {
+    this.settingEl.className = 'setting-item';
+    const info = document.createElement('div');
+    info.className = 'setting-item-info';
+    this.nameEl.className = 'setting-item-name';
+    this.descEl.className = 'setting-item-description';
+    this.controlEl.className = 'setting-item-control';
+    info.append(this.nameEl, this.descEl);
+    this.settingEl.append(info, this.controlEl);
+    container.append(this.settingEl);
+  }
+  setName(text: string) { this.nameEl.textContent = text; return this; }
+  setDesc(text: string) { this.descEl.textContent = text; return this; }
+  setClass(name: string) { this.settingEl.classList.add(name); return this; }
+  addButton(callback: (button: ButtonComponent) => void) { callback(new ButtonComponent(this.controlEl)); return this; }
+  addText(callback: (input: TextComponent) => void) { callback(new TextComponent(this.controlEl)); return this; }
+  addDropdown(callback: (dropdown: DropdownComponent) => void) { callback(new DropdownComponent(this.controlEl)); return this; }
 }
+
+export function setIcon(container: HTMLElement, name: string) { container.setAttribute('data-icon', name); }
 
 export const requestUrl = vi.fn(async (_request: unknown) => ({
   status: 200, headers: { 'content-type': 'image/png' }, arrayBuffer: new Uint8Array([137, 80, 78, 71]).buffer, text: '',
@@ -116,11 +164,15 @@ export const requestUrl = vi.fn(async (_request: unknown) => ({
 export function installDomHelpers() {
   Reflect.set(HTMLElement.prototype, 'createEl', function (this: HTMLElement, tag: string, options = { text: '' }) {
     const element = document.createElement(tag);
-    element.textContent = typeof options === 'string' ? options : String(options.text ?? '');
+    element.textContent = typeof options === 'string' ? '' : String(options.text ?? '');
+    const cls = typeof options === 'string' ? options : Reflect.get(options, 'cls');
+    if (cls) element.className = Array.isArray(cls) ? cls.join(' ') : cls;
+    const attributes = typeof options === 'string' ? {} : Reflect.get(options, 'attr') ?? {};
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
     this.append(element);
     return element;
   });
-  Reflect.set(HTMLElement.prototype, 'createDiv', function (this: HTMLElement) { return this.createEl('div'); });
+  Reflect.set(HTMLElement.prototype, 'createDiv', function (this: HTMLElement, options = {}) { return this.createEl('div', options); });
   Reflect.set(HTMLElement.prototype, 'createSpan', function (this: HTMLElement, options = { text: '' }) { return this.createEl('span', options); });
   Reflect.set(HTMLElement.prototype, 'empty', function (this: HTMLElement) { this.replaceChildren(); });
   Reflect.set(HTMLElement.prototype, 'setText', function (this: HTMLElement, text: string) { this.textContent = text; });

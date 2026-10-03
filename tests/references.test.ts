@@ -9,7 +9,7 @@ const profiles = [
 ];
 const file = { path: 'Notes/Meeting Notes.md', name: 'Meeting Notes.md', basename: 'Meeting Notes' };
 
-function vault(source = `---\nnotion_id: ${id}\n---\nBody`, files = [file]) {
+function vault(source = `---\nnotion_id: ${id}\nnotion_workspace: Personal\n---\nBody`, files = [file]) {
   return {
     resolve: vi.fn((path: string) => files.find((entry) => entry.basename === path.replace(/\.md$/i, '') || entry.path === path || entry.path === `${path}.md`) || null),
     markdownFiles: vi.fn(() => files),
@@ -24,7 +24,7 @@ async function convert(body: string, profile = profiles[0], deps = vault()) {
 }
 
 describe('note wiki-links', () => {
-  it('mentions a pushed note when both notes use the default workspace', async () => {
+  it('mentions a pushed note explicitly assigned to the same workspace', async () => {
     const result = await convert('See [[Meeting Notes]].');
     expect(result.markdown).toBe(`See <mention-page url="https://www.notion.so/${id.replace(/-/g, '')}">Meeting Notes</mention-page>.`);
     expect(result.references).toHaveLength(1);
@@ -34,6 +34,20 @@ describe('note wiki-links', () => {
     const work = vault(`---\nnotion_id: ${id}\nnotion_workspace: work\n---\nBody`);
     const result = await convert('[[Meeting Notes|A & B <review>]]', profiles[1], work);
     expect(result.markdown).toContain('>A &amp; B &lt;review&gt;</mention-page>');
+  });
+
+  it('keeps unassigned legacy notes pending rather than guessing from workspace order', async () => {
+    const legacy = vault(`---\nnotion_id: ${id}\n---\nBody`);
+    expect((await convert('[[Meeting Notes]]', profiles[0], legacy)).references).toEqual([]);
+    legacy.profiles = [...profiles].reverse();
+    expect((await convert('[[Meeting Notes]]', profiles[1], legacy)).references).toEqual([]);
+  });
+
+  it('uses pinned workspace IDs and never trusts a conflicting workspace name', async () => {
+    const linked = { ...vault(`---\nnotion_id: ${id}\nnotion_workspace: Personal\nnotion_workspace_id: actual-workspace\n---\nBody`), workspaceId: 'other-workspace' };
+    expect((await convert('[[Meeting Notes]]', profiles[0], linked)).references).toEqual([]);
+    linked.workspaceId = 'actual-workspace';
+    expect((await convert('[[Meeting Notes]]', profiles[0], linked)).references).toHaveLength(1);
   });
 
   it('leaves a different-workspace link pending', async () => {

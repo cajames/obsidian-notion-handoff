@@ -80,6 +80,7 @@ export async function applyPull(source: string, remote: string, observed: string
   bindings: ReturnType<typeof makeCheckpoint>['bindings'],
   files: { path: string; bytes: Uint8Array }[], deps: {
     read: () => Promise<string>;
+    prepareNote?: (source: string) => string;
     review: (local: string, remote: string, merged: string, firstPull: boolean) => Promise<string | null>;
     backup: (source: string) => Promise<void>;
     writeFile: (path: string, bytes: Uint8Array) => Promise<void>;
@@ -92,7 +93,8 @@ export async function applyPull(source: string, remote: string, observed: string
   if (body === null) return { cancelled: true, changed: false };
   if (hasMergeMarkers(body)) throw new Error('Resolve all merge markers before saving.');
   if (await deps.read() !== source) throw new Error('The note changed during pull. Pull again to merge the latest edits.');
-  const updated = body === local ? source : replaceNoteBody(source, body);
+  const merged = body === local ? source : replaceNoteBody(source, body);
+  const updated = deps.prepareNote ? deps.prepareNote(merged) : merged;
   if (updated !== source) await deps.backup(source);
   for (const file of files) await deps.writeFile(file.path, file.bytes);
   // write must compare and update atomically (Obsidian vault.process).

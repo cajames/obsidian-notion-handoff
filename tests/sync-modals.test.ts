@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { getChunks } from '@codemirror/merge';
-import { reviewPull } from '../src/sync-modals';
+import { confirmPush, reviewPull } from '../src/sync-modals';
 import { makeCheckpoint, planPull } from '../src/sync';
 import { createTestApp, installDomHelpers, Modal } from './helpers/obsidian';
 
@@ -22,6 +22,45 @@ beforeEach(() => {
   document.body.replaceChildren();
 });
 afterEach(() => { for (const modal of Modal.opened) modal.close(); });
+
+describe('push confirmation', () => {
+  it('shows the actual outbound diff and keeps cancellation separate from pushing', async () => {
+    const result = confirmPush(createTestApp().app as never, 'Shared\nLocal addition', 'Shared\nNotion edit', false);
+    const modal = Modal.opened.at(-1)!;
+    expect(modal.modalEl.classList.contains('notion-handoff-push-modal')).toBe(true);
+    expect(modal.contentEl.textContent).toContain('Notion edits will be replaced.');
+    const details = modal.contentEl.querySelector('details')!;
+    expect(details.open).toBe(false);
+    details.open = true;
+    expect(details.querySelector('.nh-diff-count')?.textContent).toBe('1 removed · 1 added');
+    expect(details.querySelector('pre .nh-diff-removed')?.textContent).toBe('− Notion edit\n');
+    expect(details.querySelector('pre .nh-diff-added')?.textContent).toBe('+ Local addition\n');
+    const buttons = Array.from(modal.contentEl.querySelectorAll('button'));
+    expect(buttons.map((button) => button.textContent)).toEqual(['Cancel — pull first', 'Push anyway']);
+    expect(buttons[1].classList.contains('mod-warning')).toBe(true);
+    buttons[0].click();
+    expect(await result).toBe(false);
+  });
+
+  it('requires explicit confirmation and treats dismissal as cancellation', async () => {
+    const result = confirmPush(createTestApp().app as never, 'Local', 'Remote', true);
+    const modal = Modal.opened.at(-1)!;
+    expect(modal.contentEl.querySelector('h2')?.textContent).toBe('Replace existing Notion content?');
+    Array.from(modal.contentEl.querySelectorAll('button')).find((button) => button.textContent === 'Push anyway')!.click();
+    expect(await result).toBe(true);
+    const dismissed = confirmPush(createTestApp().app as never, 'Local', 'Remote', false);
+    Modal.opened.at(-1)!.close();
+    expect(await dismissed).toBe(false);
+  });
+
+  it('does not count formatting-only whitespace as changed lines', async () => {
+    const result = confirmPush(createTestApp().app as never, 'Text  with spaces\n\nFooter', 'Text with spaces\nFooter', false);
+    const modal = Modal.opened.at(-1)!;
+    expect(modal.contentEl.querySelector('.nh-diff-count')?.textContent).toBe('0 removed · 0 added');
+    modal.close();
+    expect(await result).toBe(false);
+  });
+});
 
 describe('inline pull review', () => {
   it('shows inline word colours and per-change actions instead of textareas or merge markers', async () => {

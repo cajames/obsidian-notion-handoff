@@ -99,7 +99,7 @@ describe('browser utilities without Node globals', () => {
     const references = await browser.resolveReferences('See [[Other note]]', 'Notes/Test.md', profile, {
       resolve: () => ({ path: 'Notes/Other note.md', name: 'Other note.md' }),
       markdownFiles: () => [],
-      read: async () => `---\nnotion_id: ${id}\n---\nOther note`,
+      read: async () => `---\nnotion_id: ${id}\nnotion_workspace: ${profile.name}\n---\nOther note`,
       profiles: [profile],
     });
     expect(references.references[0].token).toMatch(/^NTN_SYNC_NOTE_[a-f0-9]{32}_0$/);

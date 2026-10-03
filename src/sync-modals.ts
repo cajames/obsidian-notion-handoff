@@ -1,4 +1,4 @@
-import { App, Modal, Setting } from 'obsidian';
+import { App, Modal, Setting, setIcon } from 'obsidian';
 import { diffLines } from 'diff';
 import { hasMergeMarkers } from './sync';
 import { comparisonBody } from './sync-text';
@@ -7,16 +7,23 @@ import { undo, undoDepth } from '@codemirror/commands';
 import { reviewEditor } from './sync-review';
 
 function showDiff(container: HTMLElement, local: string, remote: string) {
-  const details = container.createEl('details');
-  details.createEl('summary', { text: 'Show changes: Obsidian → Notion (formatting whitespace ignored)' });
-  const pre = details.createEl('pre');
-  pre.style.cssText = 'max-height: 280px; overflow: auto; white-space: pre-wrap;';
-  for (const part of diffLines(comparisonBody(local), comparisonBody(remote))) {
+  // Preview the actual push: replace the remote content with the local note.
+  const parts = diffLines(comparisonBody(remote), comparisonBody(local));
+  const added = parts.reduce((count, part) => count + (part.added ? part.count ?? 0 : 0), 0);
+  const removed = parts.reduce((count, part) => count + (part.removed ? part.count ?? 0 : 0), 0);
+  const details = container.createEl('details', { cls: 'nh-push-diff' });
+  const summary = details.createEl('summary', { cls: 'nh-diff-summary' });
+  summary.createSpan({ text: 'Review what will change' });
+  summary.createSpan({ cls: 'nh-diff-count', text: `${removed} removed · ${added} added` });
+  const legend = details.createDiv({ cls: 'nh-diff-legend' });
+  legend.createSpan({ cls: 'nh-diff-removed', text: '− Removed from Notion' });
+  legend.createSpan({ cls: 'nh-diff-added', text: '+ Added from Obsidian' });
+  legend.createSpan({ cls: 'nh-diff-note', text: 'Formatting-only whitespace changes are ignored.' });
+  const pre = details.createEl('pre', { cls: 'nh-diff-content' });
+  for (const part of parts) {
     const prefix = part.added ? '+ ' : part.removed ? '− ' : '  ';
-    const text = part.value.replace(/\n$/, '').split('\n').map((line) => prefix + line).join('\n') + (part.value.endsWith('\n') ? '\n' : '');
-    const span = pre.createSpan({ text });
-    if (part.added) span.style.color = 'var(--text-success)';
-    if (part.removed) span.style.color = 'var(--text-error)';
+    const text = part.value.replace(/\n$/, '').split('\n').map((line) => prefix + line).join('\n') + '\n';
+    pre.createSpan({ text, cls: part.added ? 'nh-diff-added' : part.removed ? 'nh-diff-removed' : 'nh-diff-unchanged' });
   }
 }
 
@@ -93,10 +100,24 @@ class PushConfirmation extends Modal {
     private finish: (confirmed: boolean) => void) { super(app); }
 
   onOpen() {
+    this.modalEl.classList.add('notion-handoff-push-modal');
+    this.contentEl.classList.add('notion-handoff-push');
+    const header = this.contentEl.createDiv({ cls: 'nh-push-header' });
+    header.createSpan({ text: 'Notion Handoff · Push' });
+    const direction = header.createSpan({ cls: 'nh-direction' });
+    direction.createSpan({ text: 'Obsidian' });
+    const arrow = direction.createSpan({ attr: { 'aria-hidden': 'true' } });
+    setIcon(arrow, 'arrow-right');
+    direction.createSpan({ text: 'Notion' });
     this.contentEl.createEl('h2', { text: this.firstPush ? 'Replace existing Notion content?' : 'Notion changed since your last sync' });
-    this.contentEl.createEl('p', { text: 'Pushing replaces the Notion page with your local note. Pull first to merge its changes, or confirm to overwrite them.' });
+    const warning = this.contentEl.createDiv({ cls: 'nh-push-warning' });
+    const icon = warning.createSpan({ cls: 'nh-warning-icon', attr: { 'aria-hidden': 'true' } });
+    setIcon(icon, 'triangle-alert');
+    const message = warning.createDiv();
+    message.createEl('strong', { text: 'Notion edits will be replaced.' });
+    message.createEl('p', { text: 'Your local note will replace the page’s content. Cancel and pull first to keep both sets of edits.' });
     showDiff(this.contentEl, this.local, this.remote);
-    new Setting(this.contentEl)
+    new Setting(this.contentEl).setClass('nh-push-actions')
       .addButton((button) => button.setButtonText('Cancel — pull first').onClick(() => this.close()))
       .addButton((button) => button.setButtonText('Push anyway').setWarning().onClick(() => {
         this.confirmed = true;
@@ -109,4 +130,41 @@ class PushConfirmation extends Modal {
 
 export function confirmPush(app: App, local: string, remote: string, firstPush: boolean) {
   return new Promise<boolean>((resolve) => new PushConfirmation(app, local, remote, firstPush, resolve).open());
+}
+
+class WorkspacePicker extends Modal {
+  private selection: string | null = null;
+  constructor(app: App, private names: string[], private noteName: string, private finish: (name: string | null) => void) { super(app); }
+
+  onOpen() {
+    this.modalEl.classList.add('notion-handoff-workspace-picker');
+    this.contentEl.classList.add('notion-handoff-push');
+    this.contentEl.createEl('h2', { text: 'Choose a workspace' });
+    this.contentEl.createEl('p', { cls: 'nh-picker-description', text: `Select the Notion workspace for “${this.noteName}”. This choice will be saved with the note; reordering workspaces won’t change it.` });
+    let selected = this.names.find((name) => name.trim()) ?? '';
+    const choice = new Setting(this.contentEl).setClass('nh-workspace-choice');
+    new Setting(this.contentEl).setClass('nh-push-actions')
+      .addButton((button) => button.setButtonText('Cancel').onClick(() => this.close()))
+      .addButton((button) => {
+        button.setButtonText('Use workspace').setCta().setDisabled(!selected).onClick(() => {
+          if (!selected || !this.names.includes(selected)) return;
+          this.selection = selected;
+          this.close();
+        });
+        choice.addDropdown((dropdown) => {
+          dropdown.selectEl.setAttribute('aria-label', 'Notion workspace');
+          for (const name of this.names) if (name.trim()) dropdown.addOption(name, name);
+          dropdown.setValue(selected).onChange((value) => {
+            selected = value;
+            button.setDisabled(!selected);
+          });
+        });
+      });
+  }
+
+  onClose() { this.finish(this.selection); this.contentEl.empty(); }
+}
+
+export function pickWorkspace(app: App, names: string[], noteName: string) {
+  return new Promise<string | null>((resolve) => new WorkspacePicker(app, names, noteName, resolve).open());
 }
