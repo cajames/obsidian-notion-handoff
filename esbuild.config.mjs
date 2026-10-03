@@ -9,7 +9,7 @@ const context = await esbuild.context({
   platform: 'node',
   format: 'cjs',
   target: 'es2022',
-  external: ['obsidian', 'electron', ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
+  external: ['obsidian', 'electron', '@codemirror/state', '@codemirror/view', ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
   sourcemap: production ? false : 'inline',
   minify: production,
   logLevel: 'info',

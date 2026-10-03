@@ -24,7 +24,8 @@ function parseResponse(raw: string) {
 }
 
 export async function insertMedia(run: (args: string[], stdin?: string) => Promise<string>, pageId: string,
-  placements: { marker: string; label: string; id: string; kind: string; caption: string; name: string }[]) {
+  placements: { marker: string; label: string; id: string; kind: string; caption: string; name: string; original?: string; source?: string; drawing?: boolean }[],
+  onInserted?: (placement: (typeof placements)[number], blockId: string) => void) {
   const issues: string[] = [];
   if (!placements.length) return issues;
   const blocks: { text: string; id: string }[] = [];
@@ -53,7 +54,12 @@ export async function insertMedia(run: (args: string[], stdin?: string) => Promi
       continue;
     }
     try {
-      await run(appendMediaArgs(pageId), JSON.stringify(appendMediaPayload(placeholder, place)));
+      const response = parseResponse(await run(appendMediaArgs(pageId), JSON.stringify(appendMediaPayload(placeholder, place))));
+      if (onInserted) {
+        const id = response.results?.[0]?.id;
+        if (typeof id !== 'string') throw new Error('Notion did not return the inserted media block ID.');
+        onInserted(place, id);
+      }
       await run(['api', `v1/blocks/${encodeURIComponent(placeholder)}`, '-X', 'DELETE']);
     } catch (error) {
       issues.push(`Attachment ${place.label}: could not embed (${error instanceof Error ? error.message : String(error)})`);

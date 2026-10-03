@@ -57,7 +57,7 @@ export async function prepareAttachments(body: string, from: string, deps: {
   upload: (bytes: Uint8Array, filename: string, mime: string) => Promise<string>;
 }) {
   const issues: string[] = [];
-  const placements: { marker: string; label: string; id: string; kind: string; caption: string; name: string }[] = [];
+  const placements: { marker: string; label: string; id: string; kind: string; caption: string; name: string; original: string; source: string; drawing: boolean }[] = [];
   const uploads = new Map<string, string>();
   const embeds = parseEmbeds(body);
   let markdown = '';
@@ -83,18 +83,19 @@ export async function prepareAttachments(body: string, from: string, deps: {
     const name = drawing ? `${file.name.replace(/\.(?:excalidraw|tldraw)(?:\.md)?$|\.tldr$|\.md$/i, '')}.png` : file.name;
     try {
       if (!drawing && file.stat.size > MAX_UPLOAD_BYTES) throw new Error('exceeds 20 MiB single-file upload limit');
-      let id = uploads.get(file.path);
-      if (!id) {
+      let uploaded = uploads.get(file.path);
+      if (!uploaded) {
         const bytes = drawing ? await deps.render(file) : await deps.read(file);
         if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error('exceeds 20 MiB single-file upload limit');
         const mime = drawing ? 'image/png' : lookup(file.name) || 'application/octet-stream';
-        id = await deps.upload(bytes, name, mime);
-        uploads.set(file.path, id);
+        uploaded = await deps.upload(bytes, name, mime);
+        uploads.set(file.path, uploaded);
       }
       const marker = `NTN_SYNC_MEDIA_${pushId.replace(/-/g, '')}_${index}`;
       // Keep a readable fallback if the blocks API cannot replace this paragraph.
       markdown += `\n\nAttachment: ${label} (not embedded) [${marker}]\n\n`;
-      placements.push({ marker, label, id, kind, caption: embed.caption, name });
+      placements.push({ marker, label, id: uploaded, kind, caption: embed.caption, name, original: embed.original,
+        source: file.path, drawing });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const hint = tldraw ? ' (install or enable Tldraw in Obsidian for drawings)' :

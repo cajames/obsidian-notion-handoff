@@ -28,6 +28,16 @@ describe('media blocks', () => {
     expect(run.mock.calls.map(([args]) => args.includes('DELETE')).filter(Boolean)).toHaveLength(2);
   });
 
+  it('records inserted block IDs for restoring local embeds on pull', async () => {
+    const run = vi.fn(async (args: string[]) => {
+      if (args.includes('page_size==100')) return JSON.stringify({ results: [{ id: 'placeholder', type: 'paragraph', paragraph: { rich_text: [{ plain_text: image.marker }] } }] });
+      return JSON.stringify({ results: [{ id: 'image-block-id' }] });
+    });
+    const inserted = vi.fn();
+    expect(await insertMedia(run, 'page', [image], inserted)).toEqual([]);
+    expect(inserted).toHaveBeenCalledExactlyOnceWith(image, 'image-block-id');
+  });
+
   it('warns without aborting when a placeholder is missing or the blocks API fails', async () => {
     const run = vi.fn(async (args: string[]) => {
       if (args.includes('page_size==100')) return JSON.stringify({ results: [{ id: 'b1', type: 'paragraph', paragraph: { rich_text: [{ plain_text: image.marker }] } }], has_more: false });

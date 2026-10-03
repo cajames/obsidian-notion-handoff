@@ -29,6 +29,7 @@ export async function resolveReferences(body: string, from: string, currentProfi
   profiles: { name: string; token: string; parentId: string }[];
 }) {
   const references: { token: string; mention: string; pending: string; label: string; id: string }[] = [];
+  const bindings: { remote: string; local: string }[] = [];
   const ranges = codeRanges(body);
   const regex = /(!?)\[\[([^\]\n]+)\]\]/g;
   let output = '';
@@ -47,6 +48,7 @@ export async function resolveReferences(body: string, from: string, currentProfi
     const title = alias?.trim() || noteName(path || rawPath.trim());
     if (isExcalidraw(path) || isTldraw(path)) {
       output += plain;
+      bindings.push({ remote: plain, local: match[0] });
       continue;
     }
     // A bare basename with multiple Markdown matches is ambiguous even if Obsidian picks one.
@@ -58,6 +60,7 @@ export async function resolveReferences(body: string, from: string, currentProfi
       : !posix.extname(path) || /\.md$/i.test(path);
     if (!isNote) {
       output += plain; // Non-note wiki-links retain the original plain-text behavior.
+      bindings.push({ remote: plain, local: match[0] });
       continue;
     }
     let id: string | null = null;
@@ -71,13 +74,15 @@ export async function resolveReferences(body: string, from: string, currentProfi
     const pending = `${title} (link pending)`;
     if (!id) {
       output += pending;
+      bindings.push({ remote: pending, local: match[0] });
       continue;
     }
     const token = `NTN_SYNC_NOTE_${nonce}_${index}`;
     // Enhanced markdown uses mention-page for inline rich-text mentions; page is a child-page block.
     const mention = `<mention-page url="https://www.notion.so/${id.replace(/-/g, '')}">${escapeHtml(title)}</mention-page>`;
     references.push({ token, mention, pending, label: title, id });
+    bindings.push({ remote: mention, local: match[0] });
     output += token;
   }
-  return { body: output + body.slice(previous), references };
+  return { body: output + body.slice(previous), references, bindings };
 }
