@@ -1,69 +1,86 @@
-# Obsidian Notion Sync (ntn)
+# Obsidian ↔ Notion Sync
 
-Desktop-only Obsidian plugin: **Push to Notion** sends the active Markdown note to Notion using Notion's official `ntn` CLI. This is a manual, one-way push; nothing runs on save.
+**Push your Obsidian notes to Notion—including Excalidraw, TLDraw, images, and file embeds. Pull changes back and choose what to keep with a coloured inline diff.**
 
-## Install
+Desktop Obsidian only. Push and pull are separate, manual commands—nothing syncs automatically on save.
 
-1. Install the CLI: `npm install -g ntn`. Ensure `ntn --version` works in the environment that launches Obsidian (or configure the absolute binary path in settings).
-2. Create a Notion integration token for each workspace and grant each integration access to its target pages and default parent page.
-3. Copy `manifest.json` and `main.js` into `<vault>/.obsidian/plugins/ntn-sync/`. Enable **Notion Sync (ntn)** in Obsidian's Community Plugins settings. Desktop Obsidian only.
-4. In plugin settings, add a named **workspace profile** for each workspace, with its **Notion API token** and **default parent page ID** for new pages. The first profile is the default; removing it makes the next profile the default. The optional **path to ntn binary** is global. Tokens are stored in Obsidian's plugin data; protect your vault/plugin data accordingly. The selected token is passed to the CLI as `NOTION_API_TOKEN` with `NOTION_KEYRING=0` (no `ntn login` needed). Notion tokens are scoped to exactly one workspace, so use one profile per workspace.
+## Push a note to Notion
 
-## Use
+1. Open a Markdown note in Obsidian.
+2. Open the command palette and run **Notion Sync (ntn): Push to Notion**.
+3. On the first push, the plugin creates a Notion page and adds `notion_id` to your note. Later pushes update that page. To target an existing page, set its ID in `notion_id` first.
 
-Open a Markdown note and run **Push to Notion** from the command palette.
+Your note's filename becomes the page title. Its body and supported embeds are uploaded; YAML frontmatter stays in Obsidian.
 
-- Optional `notion_workspace: Work` in YAML frontmatter selects the named profile (case-insensitive). Without it, the first profile is used. An unknown workspace fails instead of falling back; choose a profile with access to the target page.
-- With `notion_id` in the YAML frontmatter, the command updates that exact Notion page, including the title (from the note's filename) and Markdown body. A parent page ID is not needed for updates.
-- Without `notion_id`, it creates a page under the selected profile's default parent, writes the returned ID into the note's frontmatter, then uploads the Markdown body. Later pushes update that page. Existing frontmatter text, including `notion_workspace`, is preserved where possible; frontmatter is excluded from the uploaded body.
-- If upload fails after creation, the ID has already been saved: retrying updates the existing page. If writing the ID to the vault fails after creation, the new page may need manual cleanup in Notion.
+If Notion has changed since your last sync, choose **Cancel — pull first** to merge those edits, or **Push anyway** to overwrite the page.
 
-Example:
+![Push confirmation with the Notion diff, Cancel — pull first, and Push anyway options](docs/screenshots/push-confirmation.png)
 
-```markdown
+## Pull changes back
+
+Run **Notion Sync (ntn): Pull from Notion** on a note with `notion_id`.
+
+- Independent local and Notion edits merge automatically and save to Obsidian.
+- Conflicts—or a first pull without a baseline—open an inline review.
+- Choose **Take Notion** or **Keep Obsidian** for each changed block. You can also edit inline, undo a decision, or use the bulk actions.
+- Click **Save merged note** once every change is reviewed. **Cancel** leaves the note unchanged.
+
+Formatting-only whitespace changes are ignored; meaningful code whitespace is preserved. Pull never writes to Notion—run **Push to Notion** separately when you're ready.
+
+![Inline diff with coloured additions and deletions, per-change Take Notion and Keep Obsidian buttons, Undo, and Save merged note](docs/screenshots/pull-review.png)
+
+*Interface previews use example notes.*
+
+## Drawings, images, and embeds
+
+| Content | Push to Notion | Pull to Obsidian |
+| --- | --- | --- |
+| **Excalidraw** — `![[Design.excalidraw]]` | Render and upload as a PNG. | Restore the tracked original drawing embed—not a replacement PNG. |
+| **TLDraw** — `![[Sketch.tldr]]` or a TLDraw Markdown embed | Render and upload as a PNG. | Restore the tracked original drawing embed. |
+| **Images** — `![[photo.png]]` or `![Photo](photo.png)` | Upload at the embed's position. | Restore known embeds; download new images into `notion-sync-assets/`. |
+| **Files and note embeds** — `![[document.pdf]]`, `![[Other Note]]` | Upload as file attachments. | Restore known embeds; new non-image attachments remain Notion links. |
+| **Wiki-links** — `[[Other Note]]` | Link to its Notion page when it has an ID in the same workspace. | Restore known wiki-links; unknown page mentions become Notion links. |
+
+Excalidraw and **[Tldraw in Obsidian](https://github.com/tldraw/obsidian-plugin)** must be installed and enabled to export drawings. TLDraw Markdown files with `tldraw-file` frontmatter are supported; offline `.tldraw` files are not.
+
+**Drawing files stay editable in Obsidian.** Notion receives PNG previews, not editable drawing data. Pull preserves tracked source embeds; it does not merge drawing edits made to those PNGs. Older exports without saved mappings import as ordinary images.
+
+## Setup
+
+1. Install Notion's CLI:
+   ```sh
+   npm install -g ntn
+   ```
+2. Create a Notion integration and grant it access to your target pages and a parent page for new notes.
+3. Copy [`main.js`](main.js) and [`manifest.json`](manifest.json) into `<vault>/.obsidian/plugins/ntn-sync/`, then enable **Notion Sync (ntn)** in Community Plugins.
+4. In plugin settings, add a workspace profile with its **Notion API token** and **default parent page ID**. If Obsidian cannot find `ntn`, set its absolute binary path.
+
+The first workspace profile is the default. To use another, add `notion_workspace` to the note:
+
+```yaml
 ---
-tags: [work]
 notion_workspace: Work
 notion_id: 01234567-89ab-cdef-0123-456789abcdef
 ---
-# Notes
 ```
 
-The plugin checks for `ntn` before making API requests. Errors from the CLI appear in an Obsidian notice, including its exit code.
+Both fields are optional for a first push. Pull requires `notion_id`. No `ntn login` is needed.
 
-## Note references
+## Safety and limits
 
-- `[[Other Note]]` and `[[Other Note|alias]]` become inline Notion page mentions when the target Markdown note has a `notion_id` and resolves to the **same workspace profile**. Both notes without `notion_workspace` use the default profile. Only unambiguous note names are resolved; use an explicit path to distinguish duplicate names.
-- Missing, ambiguous, unreadable, unpushed, or cross-workspace note targets become `Other Note (link pending)` (or `alias (link pending)`). Wiki-links to non-note files stay plain text without the suffix.
-- The plugin reads the page's enhanced Markdown back after pushing mentions. If Notion rejects or fails to preserve them, it retries with **all mentions on that push** as pending text and shows a warning Notice; Notion does not identify the individual failed reference. This adds one API read for pushes with mentions. Verify important references in Notion.
-- **Note embeds are different:** `![[Other Note]]` still uploads the raw `.md` file as a Notion file attachment; it does not mention or transclude the page.
-
-## Attachments and drawings
-
-- `![[photo.png]]`, `![[photo.png|Caption]]`, `![[document.pdf]]`, and `![Caption](relative/path.png)` upload vault files with `ntn files create --json`. Images, PDFs, audio, video, and other files (such as ZIP/DOCX) appear as Notion media/file blocks at the embed position. Numeric aliases like `|400x300` are display sizes, not captions. File references resolve relative to the note, from the vault root (`/Assets/file.png`), or via Obsidian's link resolver (including attachment folders). External `https://` images remain external links.
-- Single-file uploads are limited to **20 MiB** here; free Notion workspaces may reject uploads over **5 MiB**. Missing, too-large, or failed attachments become readable text in the page and produce a warning Notice. Files are uploaded once per push, even if embedded multiple times; no cross-push upload cache.
-- Excalidraw embeds (`![[drawing.excalidraw]]` or `![[drawing.excalidraw.md|Caption]]`) need **obsidian-excalidraw-plugin** installed and enabled. Its Excalidraw Automate API renders PNG for upload. If unavailable or export fails, the embed becomes plain text with a warning suggesting installation. Pushing a drawing file itself as a note is not supported.
-- TLDraw embeds (`![[plan.tldr]]` or `![[Sketch]]` / `![[Sketch.md|Caption]]` for Markdown drawings with `tldraw-file` frontmatter) need **[Tldraw in Obsidian](https://github.com/tldraw/obsidian-plugin)** (plugin ID `tldraw`) installed and enabled. Custom frontmatter keys configured in that plugin are also recognized. The plugin renders a temporary embed preview, converts it to PNG at its natural resolution, and uploads it as an image. Missing plugins, render timeouts, or export failures leave readable text and a warning; raw drawing data is never uploaded as a fallback. The default page/preview settings are used; page-specific or cropped embeds are not currently supported. Offline `.tldraw` files and the older `obsidian-tldraw-plugin` are not supported. Drawing files themselves cannot be pushed as notes; embed them in a Markdown note instead.
-- Notion's enhanced Markdown format does not document a file-upload ID reference. The plugin uploads files, patches the page Markdown with standalone readable placeholders, then uses the blocks API to insert each media block immediately after its placeholder and delete the placeholder. If block insertion fails, the readable placeholder remains and a warning appears. Inline embeds inside complex Markdown (tables, nested lists) may lose surrounding formatting or fail placement; check the Notion page.
-
-## Limitations
-
-- The Notion Markdown endpoint may not support every Markdown construct or Notion block type. Unsupported content might be simplified by Notion; verify important notes after pushing.
-- API calls for a note are sequential (Notion rate limit is roughly 3 requests/second). No batch, auto-sync, pull, or mobile support.
-- Tokens are stored in plain plugin settings data, not an OS keychain. Payloads go over stdin; the token never appears in arguments. On Windows, npm's `.cmd` shim is handled by `cross-spawn`.
+- Pull preserves frontmatter and backs up the full note before changing it. Backups and sync mappings live in `.obsidian/plugins/ntn-sync/`; backups are not automatically pruned.
+- Your chosen local edits remain pending across pulls. If the note changes during review, saving stops rather than overwriting those edits.
+- Attachments are limited to **20 MiB each**; your Notion plan may impose a lower limit.
+- Not every Markdown construct or Notion block round-trips exactly. Complex inline embeds may lose placement; check important pages after pushing.
+- Tokens are stored in plain plugin settings. Protect your vault and plugin data. A push confirmation cannot prevent edits racing the final Notion write.
 
 ## Development
 
-- `src/` — plugin entry point and supporting TypeScript modules.
-- `tests/` — automated tests.
-- Root — project configuration and Obsidian plugin files (`manifest.json`, built `main.js`).
-
 ```sh
-npm install
+npm ci
 npm test
 npx tsc --noEmit
-npm run build     # emits main.js; manifest.json is checked in
-npm run dev       # rebuild on change
+npm run build
 ```
 
-Copy `manifest.json` and built `main.js` to the plugin directory in a test vault. Tests mock `child_process`; a live CLI or Notion account is not required.
+Source is in `src/`; tests are in `tests/`. Build emits `main.js`. Copy the plugin files into a test vault and reload to try changes.
