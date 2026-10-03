@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createArgs, createPayload, formatCliError, markdownArgs, missingCli, pushPage, runNtn, titleArgs } from '../cli';
+import { createArgs, createPayload, formatCliError, markdownArgs, markdownPayload, missingCli, pushPage, runNtn, titleArgs } from '../src/cli';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 
@@ -43,7 +43,15 @@ describe('ntn requests', () => {
     await pushPage(run, 'abc', 'Renamed', 'body');
     expect(calls[0][0]).toBe('v1/pages/abc');
     expect(JSON.parse(calls[0][1]).properties.title.title[0].text.content).toBe('Renamed');
-    expect(calls[1]).toEqual(['v1/pages/abc/markdown', '{"markdown":"body"}']);
+    expect(calls[1][0]).toBe('v1/pages/abc/markdown');
+    expect(JSON.parse(calls[1][1])).toEqual({ type: 'replace_content', replace_content: { new_str: 'body' } });
+  });
+
+  it('uses the Notion full-page replacement schema, including empty and multiline bodies', () => {
+    for (const body of ['', '# Title\n\nBody']) {
+      expect(markdownPayload(body)).toEqual({ type: 'replace_content', replace_content: { new_str: body } });
+      expect(markdownPayload(body).replace_content).not.toHaveProperty('allow_deleting_content');
+    }
   });
 
   it('maps exit errors with stderr and code', async () => {

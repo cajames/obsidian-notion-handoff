@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import { isExcalidraw } from './attachments';
+import { isTldraw } from './tldraw';
 import { parseNote } from './note';
+import { codeRanges } from './markdown';
 import { resolveProfile } from './profiles';
 
 const NOTE_ID = /^(?:[a-f\d]{32}|[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})$/i;
@@ -23,9 +25,11 @@ export async function resolveReferences(body: string, from: string, currentProfi
   resolve: (path: string, from: string) => { path: string; name: string } | null;
   markdownFiles: () => { path: string; basename: string }[];
   read: (file: { path: string }) => Promise<string>;
+  isTldraw?: (file: { path: string }) => boolean;
   profiles: { name: string; token: string; parentId: string }[];
 }) {
   const references: { token: string; mention: string; pending: string; label: string; id: string }[] = [];
+  const ranges = codeRanges(body);
   const regex = /(!?)\[\[([^\]\n]+)\]\]/g;
   let output = '';
   let previous = 0;
@@ -33,15 +37,15 @@ export async function resolveReferences(body: string, from: string, currentProfi
   for (const [index, match] of [...body.matchAll(regex)].entries()) {
     output += body.slice(previous, match.index);
     previous = match.index + match[0].length;
-    if (match[1] === '!') {
-      output += match[0]; // Embeds remain attachments, including .md file uploads.
+    if (match[1] === '!' || ranges.some((range) => match.index >= range.start && match.index < range.end)) {
+      output += match[0]; // Preserve embeds and literal code examples.
       continue;
     }
     const [rawPath, alias] = match[2].split('|', 2);
     const path = rawPath.trim().split('#')[0];
     const plain = alias?.trim() || rawPath.trim();
     const title = alias?.trim() || noteName(path || rawPath.trim());
-    if (isExcalidraw(path)) {
+    if (isExcalidraw(path) || isTldraw(path)) {
       output += plain;
       continue;
     }
@@ -49,7 +53,8 @@ export async function resolveReferences(body: string, from: string, currentProfi
     const ambiguous = !path.includes('/') && !path.includes('\\') &&
       deps.markdownFiles().filter((file) => file.basename.toLowerCase() === noteName(path).toLowerCase()).length > 1;
     const target = ambiguous ? null : deps.resolve(path, from);
-    const isNote = target ? target.path.toLowerCase().endsWith('.md') && !isExcalidraw(target.path)
+    const isNote = target ? target.path.toLowerCase().endsWith('.md') && !isExcalidraw(target.path) &&
+      !isTldraw(target.path) && !deps.isTldraw?.(target)
       : !posix.extname(path) || /\.md$/i.test(path);
     if (!isNote) {
       output += plain; // Non-note wiki-links retain the original plain-text behavior.

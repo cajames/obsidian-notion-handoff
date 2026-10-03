@@ -1,4 +1,5 @@
 import { parseDocument, isMap, isScalar } from 'yaml';
+import { codeRanges } from './markdown';
 
 // Keep the original YAML text: a YAML serializer would reformat unrelated fields.
 export function parseNote(source: string) {
@@ -50,7 +51,9 @@ export function writeNotionId(source: string, id: string) {
 
 export function toNotionMarkdown(body: string) {
   // Markdown import does not understand Obsidian wiki syntax; leave readable text.
-  return body.replace(/!?\[\[([^\]\n]+)\]\]/g, (_match, target: string) => {
+  const ranges = codeRanges(body);
+  return body.replace(/!?\[\[([^\]\n]+)\]\]/g, (match, target: string, offset: number) => {
+    if (ranges.some((range) => offset >= range.start && offset < range.end)) return match;
     const [path, label] = target.split('|');
     return label?.trim() || path.trim();
   });

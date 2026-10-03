@@ -1,4 +1,4 @@
-import { Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import { Component, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import { createArgs, createPayload, runNtn, titleArgs, titleProperty } from './cli';
 import { pushMarkdownWithMentions } from './mention-push';
 import { resolveReferences } from './references';
@@ -6,6 +6,7 @@ import { isExcalidraw, parseUploadResult, prepareAttachments, uploadArgs } from 
 import { insertMedia } from './media';
 import { resolveAttachment } from './paths';
 import { renderExcalidraw } from './excalidraw';
+import { isTldraw, renderTldraw } from './tldraw';
 import { parseNote, toNotionMarkdown, writeNotionId } from './note';
 import { resolveProfile } from './profiles';
 
@@ -36,8 +37,8 @@ export default class NtnSync extends Plugin {
       new Notice('Open a Markdown note to push to Notion.');
       return;
     }
-    if (isExcalidraw(file.path)) {
-      new Notice('Excalidraw drawings cannot be pushed as notes; embed one in a Markdown note instead.');
+    if (isExcalidraw(file.path) || this.isTldraw(file)) {
+      new Notice('Drawings cannot be pushed as notes; embed one in a Markdown note instead.');
       return;
     }
     this.pushing = true;
@@ -50,6 +51,48 @@ export default class NtnSync extends Plugin {
       new Notice(`Notion push failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
     } finally {
       this.pushing = false;
+    }
+  }
+
+  private tldrawPlugin() {
+    // Obsidian's plugin registry is not part of its public type declarations.
+    return Reflect.get(this.app, 'plugins')?.getPlugin('tldraw');
+  }
+
+  private isTldraw(file: { path: string }) {
+    return isTldraw(file.path, this.app.metadataCache.getCache(file.path)?.frontmatter ?? {},
+      this.tldrawPlugin()?.settings?.file?.altFrontmatterKey);
+  }
+
+  private async renderDrawing(asset: { path: string }, from: string) {
+    if (!this.isTldraw(asset)) {
+      return renderExcalidraw(asset.path, (window as typeof window & {
+        ExcalidrawAutomate?: { reset: () => void; createPNG: (path: string) => Promise<Blob> };
+      }).ExcalidrawAutomate);
+    }
+    if (!this.tldrawPlugin()) throw new Error('Tldraw in Obsidian is unavailable');
+    // Use TLDraw's registered embed factory for both .tldr and Markdown drawings.
+    // The registry is internal; guard against missing/incompatible plugin versions.
+    const registry = Reflect.get(this.app, 'embedRegistry');
+    const createEmbed = registry?.embedByExtension?.tldr;
+    if (typeof createEmbed !== 'function') throw new Error('TLDraw embed renderer is unavailable; update Tldraw in Obsidian');
+    const drawing = this.app.vault.getAbstractFileByPath(asset.path);
+    if (!(drawing instanceof TFile)) throw new Error('TLDraw drawing was not found');
+    const component = new Component();
+    component.load();
+    try {
+      return await renderTldraw(asset.path, async (container) => {
+        container.classList.add('internal-embed');
+        container.setAttribute('src', asset.path);
+        const embed = createEmbed({
+          app: this.app, containerEl: container, sourcePath: from,
+          linktext: asset.path, depth: 0, displayMode: false, showInline: false,
+        }, drawing, '');
+        if (!embed || typeof embed.load !== 'function') throw new Error('TLDraw returned an invalid embed component');
+        component.addChild(embed);
+      });
+    } finally {
+      component.unload();
     }
   }
 
@@ -76,13 +119,13 @@ export default class NtnSync extends Plugin {
       markdownFiles: () => this.app.vault.getMarkdownFiles(),
       read: (asset) => this.app.vault.read(asset as TFile),
       profiles: this.settings.profiles,
+      isTldraw: (asset) => this.isTldraw(asset),
     });
     const prepared = await prepareAttachments(links.body, file.path, {
       resolve,
       read: async (asset) => new Uint8Array(await this.app.vault.readBinary(asset as TFile)),
-      render: (asset) => renderExcalidraw(asset.path, (window as typeof window & {
-        ExcalidrawAutomate?: { reset: () => void; createPNG: (path: string) => Promise<Blob> };
-      }).ExcalidrawAutomate),
+      isTldraw: (asset) => this.isTldraw(asset),
+      render: (asset) => this.renderDrawing(asset, file.path),
       upload: async (bytes, name, mime) => parseUploadResult(await run(uploadArgs(name, mime), Buffer.from(bytes))),
     });
     const markdown = toNotionMarkdown(prepared.markdown);

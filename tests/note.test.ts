@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNote, toNotionMarkdown, writeNotionId } from '../note';
+import { parseNote, toNotionMarkdown, writeNotionId } from '../src/note';
 
 describe('frontmatter and body', () => {
   it('extracts body and notion_id without leaking frontmatter', () => {
@@ -41,6 +41,11 @@ describe('frontmatter and body', () => {
     expect(() => writeNotionId('---\nnotion_id: old\n---\nbody', 'new')).toThrow('already has');
     expect(() => parseNote('---\nnotion_id: [')).toThrow('Unclosed');
     expect(() => parseNote('---\ninvalid: [\n---\nbody')).toThrow('Invalid YAML');
+  });
+
+  it('preserves code examples while converting ordinary wiki links', () => {
+    const code = '`![[file.png]]` / `![](path)`\n\n```md\n[[Note|Label]]\n![[fenced.png]]\n```\n\n';
+    expect(toNotionMarkdown(`${code}See [[Note|Label]]`)).toBe(`${code}See Label`);
   });
 
   it('degrades wiki links and embeds to readable text', () => {

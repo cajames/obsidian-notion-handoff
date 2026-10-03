@@ -15,6 +15,10 @@ export function markdownArgs(pageId: string) {
   return ['api', `v1/pages/${encodeURIComponent(pageId)}/markdown`, '-X', 'PATCH', '-d', '@-'];
 }
 
+export function markdownPayload(markdown: string) {
+  return { type: 'replace_content', replace_content: { new_str: markdown } };
+}
+
 export function titleProperty(title: string) {
   return { title: { type: 'title', title: [{ type: 'text', text: { content: title } }] } };
 }
@@ -56,5 +60,5 @@ export function runNtn(binary: string, token: string, args: string[], stdin?: st
 
 export async function pushPage(run: (args: string[], stdin?: string | Buffer) => Promise<string>, pageId: string, title: string, body: string) {
   await run(titleArgs(pageId), JSON.stringify({ properties: titleProperty(title) }));
-  await run(markdownArgs(pageId), JSON.stringify({ markdown: body }));
+  await run(markdownArgs(pageId), JSON.stringify(markdownPayload(body)));
 }

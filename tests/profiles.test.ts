@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveProfile } from '../profiles';
+import { resolveProfile } from '../src/profiles';
 
 const profiles = [
   { name: 'Personal', token: 'personal-token', parentId: 'personal-page' },

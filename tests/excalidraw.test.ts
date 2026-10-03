@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { renderExcalidraw } from '../excalidraw';
+import { renderExcalidraw } from '../src/excalidraw';
 
 describe('Excalidraw Automate adapter', () => {
   it('renders the selected drawing via the optional Automate API as PNG bytes', async () => {

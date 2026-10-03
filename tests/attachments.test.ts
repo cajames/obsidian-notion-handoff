@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isExcalidraw, MAX_UPLOAD_BYTES, mediaKind, parseEmbeds, parseUploadResult, prepareAttachments, uploadArgs } from '../attachments';
-import { resolveAttachment } from '../paths';
+import { isExcalidraw, MAX_UPLOAD_BYTES, mediaKind, parseEmbeds, parseUploadResult, prepareAttachments, uploadArgs } from '../src/attachments';
+import { resolveAttachment } from '../src/paths';
 
 const image = { path: 'Assets/photo.png', name: 'photo.png', stat: { size: 12 } };
 const drawing = { path: 'Drawings/plan.excalidraw.md', name: 'plan.excalidraw.md', stat: { size: 25 } };
@@ -29,6 +29,31 @@ describe('attachment parsing', () => {
     expect(mediaKind('x.mp4')).toBe('video');
     expect(mediaKind('x.zip')).toBe('file');
     expect(mediaKind('x.pdf')).toBe('pdf');
+  });
+
+  it('ignores attachment syntax inside inline, fenced, and indented code', async () => {
+    const body = [
+      'Examples: `![[file.png]]` / `![](path)` and ``![[nested`name.png]]``.',
+      '```markdown',
+      '![[fenced.png]]',
+      '```',
+      '',
+      '~~~',
+      '![](tilde.png)',
+      '~~~',
+      '',
+      '    ![[indented.png]]',
+      '',
+      '![[photo.png|Actual image]]',
+    ].join('\n');
+    expect(parseEmbeds(body)).toMatchObject([{ path: 'photo.png', start: body.lastIndexOf('![[photo.png') }]);
+    const helpers = deps();
+    const result = await prepareAttachments(body, 'Note.md', helpers);
+    expect(helpers.resolve).toHaveBeenCalledExactlyOnceWith('photo.png', 'Note.md');
+    expect(result.issues).toEqual([]);
+    expect(result.markdown).toContain('`![[file.png]]` / `![](path)`');
+    expect(result.markdown).toContain('![[fenced.png]]');
+    expect(result.placements).toMatchObject([{ kind: 'image', caption: 'Actual image' }]);
   });
 
   it('resolves relative, vault-absolute, and attachment-folder links against mock vault', () => {
@@ -103,6 +128,34 @@ describe('attachment parsing', () => {
     expect(failure.markdown).toBe('Attachment: plan.excalidraw.md (not embedded)');
     expect(failure.issues[0]).toContain('install or enable obsidian-excalidraw-plugin');
     expect(absent.upload).not.toHaveBeenCalled();
+  });
+
+  it('exports TLDraw-marked Markdown as PNG without uploading the raw drawing', async () => {
+    const tldraw = { path: 'Drawings/Sketch.md', name: 'Sketch.md', stat: { size: MAX_UPLOAD_BYTES + 1 } };
+    const helpers = { ...deps([tldraw]), isTldraw: () => true };
+    const result = await prepareAttachments('![[Sketch.md|Plan]]', 'Note.md', helpers);
+    expect(helpers.render).toHaveBeenCalledWith(tldraw);
+    expect(helpers.read).not.toHaveBeenCalled();
+    expect(helpers.upload).toHaveBeenCalledWith(expect.any(Uint8Array), 'Sketch.png', 'image/png');
+    expect(result.placements).toMatchObject([{ kind: 'image', name: 'Sketch.png', caption: 'Plan' }]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('keeps TLDraw embeds readable if the plugin is unavailable or the PNG is oversized', async () => {
+    const tldraw = { path: 'Drawings/plan.tldr', name: 'plan.tldr', stat: { size: 25 } };
+    const absent = deps([tldraw]);
+    absent.render.mockRejectedValueOnce(new Error('Tldraw in Obsidian is unavailable'));
+    const failure = await prepareAttachments('![[plan.tldr]]', 'Note.md', absent);
+    expect(failure.markdown).toBe('Attachment: plan.tldr (not embedded)');
+    expect(failure.issues[0]).toContain('install or enable Tldraw in Obsidian');
+    expect(absent.read).not.toHaveBeenCalled();
+    expect(absent.upload).not.toHaveBeenCalled();
+    const oversized = deps([tldraw]);
+    oversized.render.mockResolvedValueOnce(new Uint8Array(MAX_UPLOAD_BYTES + 1));
+    const tooBig = await prepareAttachments('![[plan.tldr]]', 'Note.md', oversized);
+    expect(tooBig.issues[0]).toContain('20 MiB');
+    expect(tooBig.placements).toEqual([]);
+    expect(oversized.upload).not.toHaveBeenCalled();
   });
 
   it('builds CLI upload args and validates JSON upload ID', () => {

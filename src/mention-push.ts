@@ -1,4 +1,4 @@
-import { markdownArgs } from './cli';
+import { markdownArgs, markdownPayload } from './cli';
 import { renderReferences } from './references';
 
 export function mentionsImported(response: string, references: { id: string }[]) {
@@ -18,7 +18,7 @@ export function mentionsImported(response: string, references: { id: string }[])
 export async function pushMarkdownWithMentions(run: (args: string[], stdin?: string) => Promise<string>, pageId: string,
   body: string, references: { token: string; mention: string; pending: string; label: string; id: string }[]) {
   const path = `v1/pages/${encodeURIComponent(pageId)}/markdown`;
-  const patch = (markdown: string) => run(markdownArgs(pageId), JSON.stringify({ markdown }));
+  const patch = (markdown: string) => run(markdownArgs(pageId), JSON.stringify(markdownPayload(markdown)));
   try {
     await patch(renderReferences(body, references));
     if (references.length) {

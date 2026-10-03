@@ -38,11 +38,12 @@ The plugin checks for `ntn` before making API requests. Errors from the CLI appe
 - The plugin reads the page's enhanced Markdown back after pushing mentions. If Notion rejects or fails to preserve them, it retries with **all mentions on that push** as pending text and shows a warning Notice; Notion does not identify the individual failed reference. This adds one API read for pushes with mentions. Verify important references in Notion.
 - **Note embeds are different:** `![[Other Note]]` still uploads the raw `.md` file as a Notion file attachment; it does not mention or transclude the page.
 
-## Attachments and Excalidraw
+## Attachments and drawings
 
 - `![[photo.png]]`, `![[photo.png|Caption]]`, `![[document.pdf]]`, and `![Caption](relative/path.png)` upload vault files with `ntn files create --json`. Images, PDFs, audio, video, and other files (such as ZIP/DOCX) appear as Notion media/file blocks at the embed position. Numeric aliases like `|400x300` are display sizes, not captions. File references resolve relative to the note, from the vault root (`/Assets/file.png`), or via Obsidian's link resolver (including attachment folders). External `https://` images remain external links.
 - Single-file uploads are limited to **20 MiB** here; free Notion workspaces may reject uploads over **5 MiB**. Missing, too-large, or failed attachments become readable text in the page and produce a warning Notice. Files are uploaded once per push, even if embedded multiple times; no cross-push upload cache.
 - Excalidraw embeds (`![[drawing.excalidraw]]` or `![[drawing.excalidraw.md|Caption]]`) need **obsidian-excalidraw-plugin** installed and enabled. Its Excalidraw Automate API renders PNG for upload. If unavailable or export fails, the embed becomes plain text with a warning suggesting installation. Pushing a drawing file itself as a note is not supported.
+- TLDraw embeds (`![[plan.tldr]]` or `![[Sketch]]` / `![[Sketch.md|Caption]]` for Markdown drawings with `tldraw-file` frontmatter) need **[Tldraw in Obsidian](https://github.com/tldraw/obsidian-plugin)** (plugin ID `tldraw`) installed and enabled. Custom frontmatter keys configured in that plugin are also recognized. The plugin renders a temporary embed preview, converts it to PNG at its natural resolution, and uploads it as an image. Missing plugins, render timeouts, or export failures leave readable text and a warning; raw drawing data is never uploaded as a fallback. The default page/preview settings are used; page-specific or cropped embeds are not currently supported. Offline `.tldraw` files and the older `obsidian-tldraw-plugin` are not supported. Drawing files themselves cannot be pushed as notes; embed them in a Markdown note instead.
 - Notion's enhanced Markdown format does not document a file-upload ID reference. The plugin uploads files, patches the page Markdown with standalone readable placeholders, then uses the blocks API to insert each media block immediately after its placeholder and delete the placeholder. If block insertion fails, the readable placeholder remains and a warning appears. Inline embeds inside complex Markdown (tables, nested lists) may lose surrounding formatting or fail placement; check the Notion page.
 
 ## Limitations
@@ -52,6 +53,10 @@ The plugin checks for `ntn` before making API requests. Errors from the CLI appe
 - Tokens are stored in plain plugin settings data, not an OS keychain. Payloads go over stdin; the token never appears in arguments. On Windows, npm's `.cmd` shim is handled by `cross-spawn`.
 
 ## Development
+
+- `src/` — plugin entry point and supporting TypeScript modules.
+- `tests/` — automated tests.
+- Root — project configuration and Obsidian plugin files (`manifest.json`, built `main.js`).
 
 ```sh
 npm install

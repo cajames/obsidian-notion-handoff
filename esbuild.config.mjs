@@ -3,7 +3,7 @@ import { builtinModules } from 'node:module';
 
 const production = process.argv.includes('production');
 const context = await esbuild.context({
-  entryPoints: ['main.ts'],
+  entryPoints: ['src/main.ts'],
   bundle: true,
   outfile: 'main.js',
   platform: 'node',

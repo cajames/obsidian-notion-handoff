@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { prepareAttachments } from '../attachments';
-import { resolveReferences, renderReferences } from '../references';
+import { prepareAttachments } from '../src/attachments';
+import { resolveReferences, renderReferences } from '../src/references';
 
 const id = '01234567-89ab-cdef-0123-456789abcdef';
 const profiles = [
@@ -57,6 +57,24 @@ describe('note wiki-links', () => {
   it('keeps wiki-links to non-notes as plain text', async () => {
     expect((await convert('[[image.png|picture]] and [[Drawings/plan.excalidraw.md]]')).markdown)
       .toBe('picture and Drawings/plan.excalidraw.md');
+  });
+
+  it('does not resolve note references inside code examples', async () => {
+    const helpers = vault();
+    const body = '`[[Meeting Notes]]`\n\n```md\n[[Meeting Notes]]\n```';
+    const result = await convert(body, profiles[0], helpers);
+    expect(result.markdown).toBe(body);
+    expect(result.references).toEqual([]);
+    expect(helpers.resolve).not.toHaveBeenCalled();
+    expect(helpers.read).not.toHaveBeenCalled();
+  });
+
+  it('keeps TLDraw wiki-links plain and drawing embeds in the attachment pipeline', async () => {
+    const helpers = { ...vault(), isTldraw: () => true };
+    const result = await convert('[[plan.tldr|Plan]] [[Meeting Notes|Sketch]] ![[Meeting Notes]]', profiles[0], helpers);
+    expect(result.markdown).toBe('Plan Sketch ![[Meeting Notes]]');
+    expect(result.references).toEqual([]);
+    expect(helpers.read).not.toHaveBeenCalled();
   });
 
   it('keeps .md embeds in the existing file-upload pipeline', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appendMediaArgs, appendMediaPayload, insertMedia, mediaBlock } from '../media';
+import { appendMediaArgs, appendMediaPayload, insertMedia, mediaBlock } from '../src/media';
 
 const image = { marker: 'NTN_SYNC_MEDIA_one', label: 'photo.png', id: 'upload-1', kind: 'image', caption: 'A caption', name: 'photo.png' };
 const file = { marker: 'NTN_SYNC_MEDIA_two', label: 'data.zip', id: 'upload-2', kind: 'file', caption: '', name: 'data.zip' };
