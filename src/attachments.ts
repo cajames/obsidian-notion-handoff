@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomId } from './ids';
 import { lookup } from 'mime-types';
 import { codeRanges } from './markdown';
 import { isTldraw } from './tldraw';
@@ -14,20 +14,6 @@ export function mediaKind(name: string) {
   const mime = lookup(name);
   if (mime && /^(image|audio|video)\//.test(mime)) return mime.split('/')[0];
   return 'file';
-}
-
-export function uploadArgs(name: string, mime: string) {
-  return ['files', 'create', '--json', '--filename', name, '--content-type', mime];
-}
-
-export function parseUploadResult(output: string) {
-  let result;
-  try { result = JSON.parse(output); }
-  catch { throw new Error('ntn files create returned invalid JSON.'); }
-  if (typeof result?.id !== 'string' || !result.id || result.status !== 'uploaded') {
-    throw new Error('ntn files create did not return an uploaded file ID.');
-  }
-  return result.id as string;
 }
 
 export function parseEmbeds(body: string) {
@@ -62,7 +48,7 @@ export async function prepareAttachments(body: string, from: string, deps: {
   const embeds = parseEmbeds(body);
   let markdown = '';
   let previous = 0;
-  const pushId = randomUUID();
+  const pushId = randomId();
   for (const [index, embed] of embeds.entries()) {
     markdown += body.slice(previous, embed.start);
     previous = embed.end;
@@ -91,7 +77,7 @@ export async function prepareAttachments(body: string, from: string, deps: {
         uploaded = await deps.upload(bytes, name, mime);
         uploads.set(file.path, uploaded);
       }
-      const marker = `NTN_SYNC_MEDIA_${pushId.replace(/-/g, '')}_${index}`;
+      const marker = `NTN_SYNC_MEDIA_${pushId}_${index}`;
       // Keep a readable fallback if the blocks API cannot replace this paragraph.
       markdown += `\n\nAttachment: ${label} (not embedded) [${marker}]\n\n`;
       placements.push({ marker, label, id: uploaded, kind, caption: embed.caption, name, original: embed.original,

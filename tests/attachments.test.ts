@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isExcalidraw, MAX_UPLOAD_BYTES, mediaKind, parseEmbeds, parseUploadResult, prepareAttachments, uploadArgs } from '../src/attachments';
+import { isExcalidraw, MAX_UPLOAD_BYTES, mediaKind, parseEmbeds, prepareAttachments } from '../src/attachments';
 import { resolveAttachment } from '../src/paths';
 
 const image = { path: 'Assets/photo.png', name: 'photo.png', stat: { size: 12 } };
@@ -158,10 +158,4 @@ describe('attachment parsing', () => {
     expect(oversized.upload).not.toHaveBeenCalled();
   });
 
-  it('builds CLI upload args and validates JSON upload ID', () => {
-    expect(uploadArgs('photo.png', 'image/png')).toEqual(['files', 'create', '--json', '--filename', 'photo.png', '--content-type', 'image/png']);
-    expect(parseUploadResult('{"id":"123","status":"uploaded"}')).toBe('123');
-    expect(() => parseUploadResult('')).toThrow('invalid JSON');
-    expect(() => parseUploadResult('{"id":"123","status":"pending"}')).toThrow('uploaded file ID');
-  });
 });

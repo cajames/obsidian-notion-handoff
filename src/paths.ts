@@ -1,4 +1,15 @@
-import { posix } from 'node:path';
+import { posix } from 'path-browserify';
+
+export function imageImportFolder(custom: string, attachments: string, notePath: string) {
+  let folder = (custom.trim() || attachments).replace(/\\/g, '/');
+  if (folder === '/' || folder === '.') return '';
+  if (!custom.trim() && folder.startsWith('./')) folder = posix.join(posix.dirname(notePath), folder.slice(2));
+  if (folder.startsWith('/') || /[:\[\]|#\r\n]/.test(folder) || folder.split('/').includes('..')) {
+    throw new Error('Imported images folder must be a vault-relative path without .. or special link characters.');
+  }
+  const normalized = posix.normalize(folder || '.');
+  return normalized === '.' ? '' : normalized;
+}
 
 export function resolveAttachment(path: string, from: string,
   getFile: (path: string) => { path: string; name: string; stat: { size: number } } | null,

@@ -1,9 +1,9 @@
 {
-  "id": "ntn-sync",
-  "name": "Notion Sync (ntn)",
+  "id": "notion-handoff",
+  "name": "Notion Handoff",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
-  "description": "Pull and merge Notion edits, then push notes using the official ntn CLI.",
+  "description": "Pull and merge Notion edits, then publish notes using the Notion API.",
   "author": "Chris James",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }

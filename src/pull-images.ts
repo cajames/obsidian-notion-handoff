@@ -1,4 +1,5 @@
 import { extension } from 'mime-types';
+import { posix } from 'path-browserify';
 import { MAX_UPLOAD_BYTES, isExcalidraw, parseEmbeds } from './attachments';
 import { isTldraw } from './tldraw';
 import { readRemote, remoteEmbeds, fingerprint } from './sync-remote';
@@ -10,6 +11,7 @@ export async function prepareRemote(remote: Awaited<ReturnType<typeof readRemote
   checkpoint: ReturnType<typeof makeCheckpoint> | null, deps: {
     download: (url: string) => Promise<{ bytes: Uint8Array; mime: string }>;
     exists: (path: string) => Promise<boolean>;
+    imageFolder: string;
     origins?: ReturnType<typeof makeOrigin>[];
     drawingSource?: (original: string) => string | null;
   }) {
@@ -53,7 +55,8 @@ export async function prepareRemote(remote: Awaited<ReturnType<typeof readRemote
       if (!ext || !/^[a-z0-9]+$/.test(ext)) throw new Error('Notion image download did not return a supported image.');
       const id = asset?.id.replace(/[^a-z0-9]/gi, '') ?? fingerprint(url).slice(0, 32);
       const version = fingerprint(asset?.token ?? url).slice(0, 16);
-      const path = `notion-sync-assets/${pageId.replace(/[^a-z0-9]/gi, '')}/${id}-${version}.${ext}`;
+      const filename = `notion-${pageId.replace(/[^a-z0-9]/gi, '')}-${id}-${version}.${ext}`;
+      const path = posix.join(deps.imageFolder, filename);
       if (!await deps.exists(path) && !files.some((file) => file.path === path)) files.push({ path, bytes: downloaded.bytes });
       const caption = embed.caption.replace(/[\]|\r\n]/g, ' ').trim();
       replacement = `![[${path}${caption ? `|${caption}` : ''}]]`;

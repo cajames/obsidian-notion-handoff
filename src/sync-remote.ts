@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { Client } from '@notionhq/client';
 import { parseEmbeds } from './attachments';
 import { codeRanges } from './markdown';
 import { comparisonBody } from './sync-text';
@@ -8,7 +10,7 @@ export function normalizeBody(body: string) {
 }
 
 export function fingerprint(body: string) {
-  return createHash('sha256').update(normalizeBody(body)).digest('hex');
+  return bytesToHex(sha256(utf8ToBytes(normalizeBody(body))));
 }
 
 export function urlIdentity(url: string) {
@@ -44,10 +46,10 @@ export function canonicalReferences(body: string) {
     });
 }
 
-export async function readRemote(run: (args: string[]) => Promise<string>, pageId: string) {
-  const data = JSON.parse(await run(['api', `v1/pages/${encodeURIComponent(pageId)}/markdown`]));
+export async function readRemote(client: Client, pageId: string) {
+  const data = await client.pages.retrieveMarkdown({ page_id: pageId });
   if (typeof data?.markdown !== 'string') throw new Error('Notion returned invalid Markdown.');
-  if (data.truncated || data.unknown_block_ids?.length) {
+  if (data.truncated !== false || !Array.isArray(data.unknown_block_ids) || data.unknown_block_ids.length) {
     throw new Error('Notion returned truncated or inaccessible content; refusing an incomplete sync.');
   }
   const media: { id: string; kind: string; url: string; version: string; token: string }[] = [];
@@ -58,23 +60,22 @@ export async function readRemote(run: (args: string[]) => Promise<string>, pageI
     let cursor = '';
     const cursors = new Set<string>();
     do {
-      const args = ['api', `v1/blocks/${encodeURIComponent(id)}/children`, 'page_size==100'];
-      if (cursor) args.push(`start_cursor==${encodeURIComponent(cursor)}`);
-      const page = JSON.parse(await run(args));
-      if (!Array.isArray(page?.results)) throw new Error('Notion returned invalid blocks.');
+      const page = await client.blocks.children.list({ block_id: id, page_size: 100, start_cursor: cursor || undefined });
+      if (!Array.isArray(page?.results) || typeof page.has_more !== 'boolean') throw new Error('Notion returned invalid blocks.');
       for (const block of page.results) {
-        if (typeof block.id !== 'string') throw new Error('Notion returned a block without an ID.');
-        if (['image', 'file', 'pdf', 'audio', 'video'].includes(block.type)) {
-          const value = block[block.type];
-          const url = value?.file?.url ?? value?.external?.url;
+        if (typeof block.id !== 'string' || !block.id || !('type' in block) || typeof block.has_children !== 'boolean') throw new Error('Notion returned an incomplete block.');
+        if (block.type === 'image' || block.type === 'file' || block.type === 'pdf' || block.type === 'audio' || block.type === 'video') {
+          const value = block.type === 'image' ? block.image : block.type === 'file' ? block.file :
+            block.type === 'pdf' ? block.pdf : block.type === 'audio' ? block.audio : block.video;
+          const url = value && ('file' in value ? value.file.url : 'external' in value ? value.external.url : undefined);
           if (typeof url !== 'string') throw new Error('Notion media is missing its download URL.');
           const asset = { id: String(block.id), kind: String(block.type), url, version: String(block.last_edited_time ?? '') };
           media.push({ ...asset, token: mediaToken(asset) });
         }
         if (block.has_children && !['child_page', 'child_database'].includes(block.type)) await walk(block.id, depth + 1);
       }
-      if (page.has_more && typeof page.next_cursor !== 'string') throw new Error('Notion pagination is incomplete.');
-      cursor = page.has_more ? page.next_cursor : '';
+      if (page.has_more && (typeof page.next_cursor !== 'string' || !page.next_cursor)) throw new Error('Notion pagination is incomplete.');
+      cursor = page.has_more ? page.next_cursor! : '';
       if (cursor && cursors.has(cursor)) throw new Error('Notion pagination repeated a cursor.');
       cursors.add(cursor);
     } while (cursor);

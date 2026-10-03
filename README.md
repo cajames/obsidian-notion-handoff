@@ -1,86 +1,75 @@
-# Obsidian ↔ Notion Sync
+# Notion Handoff
 
-**Push your Obsidian notes to Notion—including Excalidraw, TLDraw, images, and file embeds. Pull changes back and choose what to keep with a coloured inline diff.**
+**Publish polished notes across your clients' Notion workspaces. Keep background research local. Share only the notes you choose.**
 
-Desktop Obsidian only. Push and pull are separate, manual commands—nothing syncs automatically on save.
+For desktop and mobile Obsidian. Mobile support is experimental. Push and Pull are separate manual commands, with no startup, background, or on-save sync. Connects directly to Notion; no CLI, Node, or npm needed.
 
-## Push a note to Notion
+## Base features
 
-1. Open a Markdown note in Obsidian.
-2. Open the command palette and run **Notion Sync (ntn): Push to Notion**.
-3. On the first push, the plugin creates a Notion page and adds `notion_id` to your note. Later pushes update that page. To target an existing page, set its ID in `notion_id` first.
+- **Push to Notion:** create a page on first push, then update it using the saved `notion_id`. The filename becomes its title. Frontmatter stays local.
+- **Pull from Notion:** bring page edits back without publishing your pending local edits.
+- Upload images and files at their embed positions. Import new Notion images into Obsidian’s attachment location, or choose an **Imported images folder** in plugin settings. Existing imports stay where they are.
+- Restore tracked wiki-links and embeds. Same-workspace note links become page mentions when possible, otherwise readable pending text.
 
-Your note's filename becomes the page title. Its body and supported embeds are uploaded; YAML frontmatter stays in Obsidian.
+## What makes it different
 
-If Notion has changed since your last sync, choose **Cancel — pull first** to merge those edits, or **Push anyway** to overwrite the page.
+- **Workspace profiles:** separate tokens and parent pages for each client. Select a profile per note with `notion_workspace`; the first profile is the default.
+- **Granular merges:** three-way merging preserves independent edits. Conflicts and first-time differences without a baseline open an inline review with per-block **Take Notion**, **Keep Obsidian**, **Undo**, manual editing, and cancellation. Formatting-only whitespace changes are ignored; meaningful code whitespace stays intact.
+- **Drawing support:** push Excalidraw and TLDraw embeds as PNG previews. Pull restores tracked editable source embeds, not replacement PNGs. Enable Excalidraw or [Tldraw in Obsidian](https://github.com/tldraw/obsidian-plugin) to export. TLDraw `.tldr` and Markdown drawings are supported; offline `.tldraw` files are not.
 
-![Push confirmation with the Notion diff, Cancel — pull first, and Push anyway options](docs/screenshots/push-confirmation.png)
+## Install with BRAT
 
-## Pull changes back
+Use [BRAT](https://github.com/TfTHacker/obsidian42-brat) on desktop or mobile:
 
-Run **Notion Sync (ntn): Pull from Notion** on a note with `notion_id`.
+1. Open **Settings → Community plugins**, then install and enable **BRAT**.
+2. In BRAT settings, choose **Add a beta plugin**, enter `cajames/obsidian-notion-handoff`, and select the latest release.
+3. Enable **Notion Handoff** in Community Plugins.
 
-- Independent local and Notion edits merge automatically and save to Obsidian.
-- Conflicts—or a first pull without a baseline—open an inline review.
-- Choose **Take Notion** or **Keep Obsidian** for each changed block. You can also edit inline, undo a decision, or use the bulk actions.
-- Click **Save merged note** once every change is reviewed. **Cancel** leaves the note unchanged.
+BRAT handles installation and updates. No manual file copying or GitHub token is needed for the public repository.
 
-Formatting-only whitespace changes are ignored; meaningful code whitespace is preserved. Pull never writes to Notion—run **Push to Notion** separately when you're ready.
+**Release availability:** this requires a public repository with a published GitHub release. The first release is still pending. Notion Handoff is not yet listed directly in Community Plugins.
 
-![Inline diff with coloured additions and deletions, per-change Take Notion and Keep Obsidian buttons, Undo, and Save merged note](docs/screenshots/pull-review.png)
+## Notion setup
 
-*Interface previews use example notes.*
+1. Create a Notion integration with read, update, and insert content capabilities. Grant it access to target pages and a parent page for new notes.
+2. Add its API token and default parent page ID in plugin settings. Add more profiles for other workspaces.
 
-## Drawings, images, and embeds
-
-| Content | Push to Notion | Pull to Obsidian |
-| --- | --- | --- |
-| **Excalidraw** — `![[Design.excalidraw]]` | Render and upload as a PNG. | Restore the tracked original drawing embed—not a replacement PNG. |
-| **TLDraw** — `![[Sketch.tldr]]` or a TLDraw Markdown embed | Render and upload as a PNG. | Restore the tracked original drawing embed. |
-| **Images** — `![[photo.png]]` or `![Photo](photo.png)` | Upload at the embed's position. | Restore known embeds; download new images into `notion-sync-assets/`. |
-| **Files and note embeds** — `![[document.pdf]]`, `![[Other Note]]` | Upload as file attachments. | Restore known embeds; new non-image attachments remain Notion links. |
-| **Wiki-links** — `[[Other Note]]` | Link to its Notion page when it has an ID in the same workspace. | Restore known wiki-links; unknown page mentions become Notion links. |
-
-Excalidraw and **[Tldraw in Obsidian](https://github.com/tldraw/obsidian-plugin)** must be installed and enabled to export drawings. TLDraw Markdown files with `tldraw-file` frontmatter are supported; offline `.tldraw` files are not.
-
-**Drawing files stay editable in Obsidian.** Notion receives PNG previews, not editable drawing data. Pull preserves tracked source embeds; it does not merge drawing edits made to those PNGs. Older exports without saved mappings import as ordinary images.
-
-## Setup
-
-1. Install Notion's CLI:
-   ```sh
-   npm install -g ntn
-   ```
-2. Create a Notion integration and grant it access to your target pages and a parent page for new notes.
-3. Copy [`main.js`](main.js) and [`manifest.json`](manifest.json) into `<vault>/.obsidian/plugins/ntn-sync/`, then enable **Notion Sync (ntn)** in Community Plugins.
-4. In plugin settings, add a workspace profile with its **Notion API token** and **default parent page ID**. If Obsidian cannot find `ntn`, set its absolute binary path.
-
-The first workspace profile is the default. To use another, add `notion_workspace` to the note:
+Optional note frontmatter:
 
 ```yaml
 ---
-notion_workspace: Work
+notion_workspace: Client
 notion_id: 01234567-89ab-cdef-0123-456789abcdef
 ---
 ```
 
-Both fields are optional for a first push. Pull requires `notion_id`. No `ntn login` is needed.
+A first push needs neither field. Pull requires `notion_id`.
+
+The plugin ID is `notion-handoff`. Earlier development installs using `ntn-sync` are separate plugins; their settings and sync state are not migrated automatically.
+
+## Manual workflow
+
+Open a Markdown note and run **Push to Notion** from the command palette. Changed remote content requires confirmation. Cancel and pull first to merge, or choose **Push anyway** to replace the page.
+
+![Push confirmation with the Notion diff and cancellation options](docs/screenshots/push-confirmation.png)
+
+Run **Pull from Notion** to merge remote edits. Independent changes save automatically. In review, resolve each change and click **Save merged note**, or **Cancel** to leave the note untouched. Pull never writes to Notion.
+
+![Inline review with per-block choices, Undo, and Save merged note](docs/screenshots/pull-review.png)
+
+*Screenshots use example notes.*
 
 ## Safety and limits
 
-- Pull preserves frontmatter and backs up the full note before changing it. Backups and sync mappings live in `.obsidian/plugins/ntn-sync/`; backups are not automatically pruned.
-- Your chosen local edits remain pending across pulls. If the note changes during review, saving stops rather than overwriting those edits.
-- Attachments are limited to **20 MiB each**; your Notion plan may impose a lower limit.
-- Not every Markdown construct or Notion block round-trips exactly. Complex inline embeds may lose placement; check important pages after pushing.
-- Tokens are stored in plain plugin settings. Protect your vault and plugin data. A push confirmation cannot prevent edits racing the final Notion write.
+- Mobile installation is enabled, but physical iOS and Android devices have not yet been verified. Drawing exports require a compatible renderer plugin on your device.
+- Pull preserves frontmatter, backs up the full note, and stops if the note changes during review. Backups and sync state stay in `.obsidian/plugins/notion-handoff/`.
+- Incomplete or inaccessible remote content is rejected. Push rechecks Notion before writing, but cannot eliminate a final racing edit.
+- Files are limited to **20 MiB each**; your Notion plan may impose a lower limit. Some Markdown and Notion blocks do not round-trip exactly.
+- Drawings remain editable locally. Notion receives previews; edits to those PNGs are not merged into drawing sources. Untracked older exports import as images.
+- Tokens are stored in plain plugin settings. Protect your vault. [Transport and retry policy](docs/notion-api.md).
 
 ## Development
 
-```sh
-npm ci
-npm test
-npx tsc --noEmit
-npm run build
-```
+`npm ci`, `npm test`, `npx tsc --noEmit`, `npm run build`. Source: `src/`. Tests: `tests/`.
 
-Source is in `src/`; tests are in `tests/`. Build emits `main.js`. Copy the plugin files into a test vault and reload to try changes.
+For local testing only, place the built `main.js` and `manifest.json` in `<vault>/.obsidian/plugins/notion-handoff/` and reload Obsidian.

@@ -11,7 +11,7 @@ function snapshot(caption = 'Changed caption', version = 'v2', id = 'block') {
 }
 
 function deps() {
-  return { download: vi.fn(async () => ({ bytes: new Uint8Array([137, 80, 78, 71]), mime: 'image/png' })), exists: vi.fn(async () => false) };
+  return { imageFolder: 'Attachments', download: vi.fn(async () => ({ bytes: new Uint8Array([137, 80, 78, 71]), mime: 'image/png' })), exists: vi.fn(async () => false) };
 }
 
 describe('drawing provenance', () => {
@@ -40,7 +40,7 @@ describe('drawing provenance', () => {
   it('imports untracked older exports normally without inferring their source from image content', async () => {
     const helpers = { ...deps(), origins: [makeOrigin('different-block', '![[plan.tldr]]', 'plan.tldr', true)] };
     const result = await prepareRemote(snapshot(), 'page', null, helpers);
-    expect(result.markdown).toContain('![[notion-sync-assets/');
+    expect(result.markdown).toContain('![[Attachments/');
     expect(result.files).toHaveLength(1);
     expect(result.origins).toEqual(helpers.origins);
     expect(helpers.download).toHaveBeenCalledTimes(1);

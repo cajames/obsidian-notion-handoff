@@ -2,31 +2,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { getChunks } from '@codemirror/merge';
-import NtnSync from '../src/main';
-import { runNtn } from '../src/cli';
+import NotionHandoff from '../src/main';
+import { api, mockNotion } from './helpers/notion';
 import { makeCheckpoint } from '../src/sync';
 import { fingerprint } from '../src/sync-remote';
 import { createTestApp, installDomHelpers, Modal, Notice, requestUrl } from './helpers/obsidian';
 
-vi.mock('../src/cli', async (importOriginal) => ({ ...await importOriginal<typeof import('../src/cli')>(), runNtn: vi.fn() }));
-
-const statePath = '.obsidian/plugins/ntn-sync/sync-state.json';
+const statePath = '.obsidian/plugins/notion-handoff/sync-state.json';
 const key = `${fingerprint('test-token').slice(0, 16)}:pageid`;
 
 function server(initial: string, blocks: unknown[] = []) {
   let remote = initial;
-  vi.mocked(runNtn).mockImplementation(async (_binary, _token, args, stdin) => {
-    if (args[0] === '--version') return 'ntn 0.23.16';
-    if (args[1].endsWith('/markdown')) {
-      if (args.includes('PATCH')) {
-        const payload = JSON.parse(String(stdin));
-        expect(payload.type).toBe('replace_content');
-        remote = payload.replace_content.new_str;
+  api.mockImplementation(async ({ path, method, body }) => {
+    if (path.includes('/markdown')) {
+      if (method === 'PATCH') {
+        expect(body.type).toBe('replace_content');
+        remote = body.replace_content.new_str;
       }
-      return JSON.stringify({ markdown: remote, truncated: false, unknown_block_ids: [] });
+      return { markdown: remote, truncated: false, unknown_block_ids: [] };
     }
-    if (args[1].endsWith('/children')) return JSON.stringify({ results: blocks, has_more: false });
-    return '{}';
+    if (path.includes('/children')) return { results: blocks, has_more: false };
+    return {};
   });
   return { read: () => remote, edit: (value: string) => { remote = value; } };
 }
@@ -34,12 +30,12 @@ function server(initial: string, blocks: unknown[] = []) {
 async function setup(source: string, checkpoint: ReturnType<typeof makeCheckpoint> | null = null) {
   const store = createTestApp(source);
   if (checkpoint) store.files.set(statePath, JSON.stringify({ [key]: checkpoint }));
-  const plugin = new NtnSync(store.app as never, { id: 'ntn-sync', name: 'Sync', version: '0.1.0', minAppVersion: '1.5.0', author: 'Test', description: 'Test', dir: '.obsidian/plugins/ntn-sync' });
+  const plugin = new NotionHandoff(store.app as never, { id: 'notion-handoff', name: 'Notion Handoff', version: '0.1.0', minAppVersion: '1.5.0', author: 'Test', description: 'Test', dir: '.obsidian/plugins/notion-handoff' });
   await plugin.onload();
   return { ...store, plugin };
 }
 
-function command(plugin: NtnSync, operation: 'pullCurrentNote' | 'pushCurrentNote') {
+function command(plugin: NotionHandoff, operation: 'pullCurrentNote' | 'pushCurrentNote') {
   return Reflect.get(plugin, operation).call(plugin) as Promise<void>;
 }
 
@@ -57,7 +53,7 @@ beforeEach(() => {
   Modal.opened = [];
   Notice.messages = [];
   document.body.replaceChildren();
-  vi.mocked(requestUrl).mockResolvedValue({ status: 200, headers: { 'content-type': 'image/png' }, arrayBuffer: new Uint8Array([137, 80, 78, 71]).buffer });
+  mockNotion();
 });
 
 describe('plugin pull/push integration', () => {
@@ -67,18 +63,40 @@ describe('plugin pull/push integration', () => {
     const source = `---\nnotion_id: page-id\ntags: [project]\n---\n${base.replace('Intro', 'Local intro')}`;
     const store = await setup(source, makeCheckpoint(base, base, fingerprint(base)));
     expect(Reflect.get(store.plugin, 'commands').map((cmd: { id: string }) => cmd.id)).toEqual(['push-to-notion', 'pull-from-notion']);
+    expect(requestUrl).not.toHaveBeenCalled();
+    expect(Reflect.get(store.plugin, 'saveData')).not.toHaveBeenCalled();
+    expect(store.plugin.settings).not.toHaveProperty('binary');
     await command(store.plugin, 'pullCurrentNote');
     expect(store.files.get(store.note.path)).toBe(source.replace('Ending', 'Notion ending'));
     expect(Modal.opened).toEqual([]);
     expect([...store.files.keys()].filter((path) => path.includes('/backups/'))).toHaveLength(1);
     expect(JSON.parse(store.files.get(statePath)!)[key].local).toBe(base.replace('Ending', 'Notion ending'));
     expect(Notice.messages.at(-1)).toContain('Push remains separate');
-    expect(vi.mocked(runNtn).mock.calls.every((call) => !call[2].includes('PATCH') && !call[2].includes('POST'))).toBe(true);
+    expect(api.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
+  });
+
+  it('keeps legacy plugin state separate from the new plugin ID', async () => {
+    server('Base');
+    const source = '---\nnotion_id: page-id\n---\nBase';
+    const store = await setup(source);
+    const legacyState = '.obsidian/plugins/ntn-sync/sync-state.json';
+    const legacyOrigins = '.obsidian/plugins/ntn-sync/media-origins.json';
+    store.files.set(legacyState, 'Legacy checkpoint left untouched');
+    store.files.set(legacyOrigins, 'Legacy provenance left untouched');
+    await store.plugin.onload();
+    await command(store.plugin, 'pullCurrentNote');
+    expect(store.files.get(legacyState)).toBe('Legacy checkpoint left untouched');
+    expect(store.files.get(legacyOrigins)).toBe('Legacy provenance left untouched');
+    expect(store.files.get(store.note.path)).toBe(source);
+    expect(store.files.has(statePath)).toBe(true);
+    expect(store.app.vault.adapter.read).not.toHaveBeenCalledWith(legacyState);
+    expect(store.app.vault.adapter.read).not.toHaveBeenCalledWith(legacyOrigins);
+    expect(store.writes.every((path) => !path.includes('/ntn-sync/'))).toBe(true);
   });
 
   it('imports new images on first pull only after review, preserving frontmatter and credentials', async () => {
     const url = 'https://example.com/image.png';
-    server(`Notion text\n\n![Screenshot](${url})`, [{ id: 'image-id', type: 'image', image: { external: { url } }, last_edited_time: 'v1' }]);
+    server(`Notion text\n\n![Screenshot](${url})`, [{ id: 'image-id', type: 'image', has_children: false, image: { external: { url } }, last_edited_time: 'v1' }]);
     const source = '---\nnotion_id: page-id\ntags: [keep]\n---\nLocal text';
     const store = await setup(source);
     const pull = command(store.plugin, 'pullCurrentNote');
@@ -90,15 +108,74 @@ describe('plugin pull/push integration', () => {
     await pull;
     expect(store.binaries.size).toBe(1);
     expect(store.files.get(store.note.path)).toMatch(/^---\nnotion_id: page-id\ntags: \[keep\]\n---\nNotion text/);
-    expect(store.files.get(store.note.path)).toContain('![[notion-sync-assets/');
-    expect(requestUrl).toHaveBeenCalledExactlyOnceWith({ url, method: 'GET', throw: false });
+    expect(store.files.get(store.note.path)).toContain('![[Attachments/notion-pageid-');
+    expect(requestUrl).toHaveBeenCalledWith({ url, method: 'GET', throw: false });
     expect(JSON.parse(store.files.get(statePath)!)[key].bindings).toHaveLength(1);
     expect(Reflect.get(store.plugin, 'saveData')).not.toHaveBeenCalled();
     // Reloading the plugin restores the baseline and asset mappings.
     await store.plugin.onload();
     await command(store.plugin, 'pullCurrentNote');
     expect(Modal.opened).toHaveLength(1);
-    expect(requestUrl).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requestUrl).mock.calls.filter(([request]) => (request as any).url === url)).toHaveLength(1);
+  });
+
+  it.each([
+    ['', 'Attachments', 'Attachments/'],
+    ['', './Images', 'Notes/Images/'],
+    ['', './', 'Notes/'],
+    ['', '/', ''],
+    ['Client assets/Notion', 'Attachments', 'Client assets/Notion/'],
+    ['/', 'Attachments', ''],
+  ])('imports images using custom %j or Obsidian %j folder', async (custom, attachments, expected) => {
+    const url = 'https://example.com/image.png';
+    server(`![Image](${url})`, [{ id: 'image', type: 'image', has_children: false, image: { external: { url } } }]);
+    const store = await setup('---\nnotion_id: page-id\n---\nLocal');
+    store.plugin.settings.imageImportFolder = custom;
+    store.app.vault.getConfig.mockReturnValue(attachments);
+    const pull = command(store.plugin, 'pullCurrentNote');
+    await vi.waitFor(() => expect(Modal.opened).toHaveLength(1));
+    expect(store.binaries.size).toBe(0);
+    expect(store.app.vault.createFolder).not.toHaveBeenCalled();
+    click('Take Notion'); click('Save merged note'); await pull;
+    const path = [...store.binaries.keys()][0];
+    expect(path).toMatch(new RegExp(`^${expected}notion-pageid-image-[a-f0-9]+\\.png$`));
+    expect(store.files.get(store.note.path)).toContain(`![[${path}|Image]]`);
+    expect([...store.binaries.keys()]).toHaveLength(1);
+  });
+
+  it('loads a saved import folder without rewriting settings or credentials', async () => {
+    const store = await setup('Local');
+    expect(store.plugin.settings.imageImportFolder).toBe('');
+    const saved = { ...await store.plugin.loadData(), imageImportFolder: 'Client assets/Notion' };
+    vi.mocked(store.plugin.loadData).mockResolvedValue(saved);
+    await store.plugin.onload();
+    expect(store.plugin.settings.imageImportFolder).toBe('Client assets/Notion');
+    expect(store.plugin.settings.profiles).toEqual(saved.profiles);
+    expect(store.plugin.saveData).not.toHaveBeenCalled();
+    expect(requestUrl).not.toHaveBeenCalled();
+  });
+
+  it.each(['../outside', '/absolute/folder', 'C:\\outside', 'Folder/../../outside', 'Folder|caption', 'Folder#heading'])('rejects unsafe import folder %j without writing', async (folder) => {
+    server('Remote');
+    const store = await setup('---\nnotion_id: page-id\n---\nLocal');
+    store.plugin.settings.imageImportFolder = folder;
+    await command(store.plugin, 'pullCurrentNote');
+    expect(Notice.messages.at(-1)).toContain('vault-relative path');
+    expect(store.writes).toEqual([]);
+    expect(Modal.opened).toEqual([]);
+  });
+
+  it('cancels an image import without creating the configured folder or files', async () => {
+    const url = 'https://example.com/image.png';
+    server(`![Image](${url})`, [{ id: 'image', type: 'image', has_children: false, image: { external: { url } } }]);
+    const store = await setup('---\nnotion_id: page-id\n---\nLocal');
+    store.plugin.settings.imageImportFolder = 'New folder/Notion';
+    const pull = command(store.plugin, 'pullCurrentNote');
+    await vi.waitFor(() => expect(Modal.opened).toHaveLength(1));
+    click('Cancel'); await pull;
+    expect(store.writes).toEqual([]);
+    expect(store.app.vault.createFolder).not.toHaveBeenCalled();
+    expect(store.binaries.size).toBe(0);
   });
 
   it('persists individual review decisions while keeping independent local edits pending across pulls', async () => {
@@ -120,7 +197,7 @@ describe('plugin pull/push integration', () => {
     await command(store.plugin, 'pullCurrentNote');
     expect(store.files.get(store.note.path)).toBe(prefix + chosen.replace('Last line', 'Notion last line'));
     expect(Modal.opened).toHaveLength(1);
-    expect(vi.mocked(runNtn).mock.calls.every((call) => !call[2].includes('PATCH') && !call[2].includes('POST'))).toBe(true);
+    expect(api.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
   });
 
   it('cancels first pull or conflict review without saving notes, images, or checkpoints', async () => {
@@ -163,7 +240,7 @@ describe('plugin pull/push integration', () => {
     const push = command(store.plugin, 'pushCurrentNote');
     await vi.waitFor(() => expect(Modal.opened).toHaveLength(1));
     expect(Modal.opened[0].contentEl.textContent).toContain('Notion changed');
-    expect(vi.mocked(runNtn).mock.calls.some((call) => call[2].includes('PATCH'))).toBe(false);
+    expect(api.mock.calls.some(([request]) => request.method === 'PATCH')).toBe(false);
     click('Cancel — pull first');
     await push;
     expect(store.writes).toEqual([]);
@@ -190,11 +267,11 @@ describe('plugin pull/push integration', () => {
 
   it('rechecks Notion after preparation and asks about changes that arrived during the push', async () => {
     const notion = server('Base');
-    const run = vi.mocked(runNtn).getMockImplementation()!;
+    const run = api.getMockImplementation()!;
     let changed = false;
-    vi.mocked(runNtn).mockImplementation(async (...args) => {
-      const result = await run(...args);
-      if (!changed && args[2][1]?.endsWith('/children')) { changed = true; notion.edit('Late edit'); }
+    api.mockImplementation(async (request) => {
+      const result = await run(request);
+      if (!changed && request.path.includes('/children')) { changed = true; notion.edit('Late edit'); }
       return result;
     });
     const store = await setup('---\nnotion_id: page-id\n---\nLocal', makeCheckpoint('Base', 'Base', fingerprint('Base')));
@@ -203,32 +280,31 @@ describe('plugin pull/push integration', () => {
     expect(Modal.opened[0].contentEl.textContent).toContain('Notion changed');
     click('Cancel — pull first'); await push;
     expect(notion.read()).toBe('Late edit');
-    expect(vi.mocked(runNtn).mock.calls.some((call) => call[2].includes('PATCH'))).toBe(false);
+    expect(api.mock.calls.some(([request]) => request.method === 'PATCH')).toBe(false);
   });
 
   it('restores a pushed drawing embed on pull instead of importing its rendered PNG', async () => {
     let remote = 'Base';
     let inserted = false;
     const url = 'https://prod-files.s3.amazonaws.com/sketch.png?signature=one';
-    vi.mocked(runNtn).mockImplementation(async (_binary, _token, args, stdin) => {
-      if (args[0] === '--version') return 'ntn';
-      if (args[0] === 'files') return JSON.stringify({ id: 'upload-id', status: 'uploaded' });
-      if (args[1].endsWith('/markdown')) {
-        if (args.includes('PATCH')) remote = JSON.parse(String(stdin)).replace_content.new_str;
-        return JSON.stringify({ markdown: remote, truncated: false, unknown_block_ids: [] });
+    api.mockImplementation(async ({ path, method, body }) => {
+      if (path.includes('/file_uploads')) return { id: 'upload-id', status: path === '/v1/file_uploads' ? 'pending' : 'uploaded' };
+      if (path.includes('/markdown')) {
+        if (method === 'PATCH') remote = body.replace_content.new_str;
+        return { markdown: remote, truncated: false, unknown_block_ids: [] };
       }
-      if (args[1].endsWith('/children')) {
-        if (args.includes('PATCH')) {
+      if (path.includes('/children')) {
+        if (method === 'PATCH') {
           inserted = true;
           remote = remote.replace(/Attachment:[^\n]+\[NTN_SYNC_MEDIA_[^\]]+\]/, `![Sketch](${url})`);
-          return JSON.stringify({ results: [{ id: 'drawing-block' }] });
+          return { results: [{ id: 'drawing-block' }] };
         }
         const marker = remote.match(/NTN_SYNC_MEDIA_[^\]]+/)?.[0];
-        return JSON.stringify({ results: inserted
-          ? [{ id: 'drawing-block', type: 'image', last_edited_time: 'v1', image: { file: { url } } }]
-          : marker ? [{ id: 'placeholder', type: 'paragraph', paragraph: { rich_text: [{ plain_text: marker }] } }] : [], has_more: false });
+        return { results: inserted
+          ? [{ id: 'drawing-block', type: 'image', has_children: false, last_edited_time: 'v1', image: { file: { url } } }]
+          : marker ? [{ id: 'placeholder', type: 'paragraph', has_children: false, paragraph: { rich_text: [{ plain_text: marker }] } }] : [], has_more: false };
       }
-      return '{}';
+      return {};
     });
     const original = '![[Drawings/plan.tldr|Sketch]]';
     const source = `---\nnotion_id: page-id\n---\n# Note\n\n${original}`;
@@ -242,34 +318,33 @@ describe('plugin pull/push integration', () => {
     await command(store.plugin, 'pullCurrentNote');
     expect(store.files.get(store.note.path)).toContain(original);
     expect(store.files.get(store.note.path)).toContain('Added in Notion');
-    expect(requestUrl).not.toHaveBeenCalled();
+    expect(vi.mocked(requestUrl).mock.calls.every(([request]) => (request as any).url.startsWith('https://api.notion.com/'))).toBe(true);
     expect(Modal.opened).toEqual([]);
   });
 
   it('retains drawing provenance even when final Notion readback fails', async () => {
     let markdown = 'Base';
     let inserted = false;
-    vi.mocked(runNtn).mockImplementation(async (_binary, _token, args, stdin) => {
-      if (args[0] === '--version') return 'ntn';
-      if (args[0] === 'files') return JSON.stringify({ id: 'upload', status: 'uploaded' });
-      if (args[1].endsWith('/markdown')) {
-        if (args.includes('PATCH')) markdown = JSON.parse(String(stdin)).replace_content.new_str;
+    api.mockImplementation(async ({ path, method, body }) => {
+      if (path.includes('/file_uploads')) return { id: 'upload', status: path === '/v1/file_uploads' ? 'pending' : 'uploaded' };
+      if (path.includes('/markdown')) {
+        if (method === 'PATCH') markdown = body.replace_content.new_str;
         else if (inserted) throw new Error('Readback unavailable');
-        return JSON.stringify({ markdown, truncated: false });
+        return { markdown, truncated: false, unknown_block_ids: [] };
       }
-      if (args[1].endsWith('/children')) {
-        if (args.includes('PATCH')) { inserted = true; return JSON.stringify({ results: [{ id: 'drawing-block' }] }); }
+      if (path.includes('/children')) {
+        if (method === 'PATCH') { inserted = true; return { results: [{ id: 'drawing-block' }] }; }
         const marker = markdown.match(/NTN_SYNC_MEDIA_[^\]]+/)?.[0];
-        return JSON.stringify({ results: marker ? [{ id: 'placeholder', type: 'paragraph', paragraph: { rich_text: [{ plain_text: marker }] } }] : [] });
+        return { results: marker ? [{ id: 'placeholder', type: 'paragraph', has_children: false, paragraph: { rich_text: [{ plain_text: marker }] } }] : [], has_more: false };
       }
-      return '{}';
+      return {};
     });
     const original = '![[plan.tldr]]';
     const store = await setup(`---\nnotion_id: page-id\n---\n${original}`, makeCheckpoint('Base', 'Base', fingerprint('Base')));
     store.files.set('plan.tldr', '{}');
     Reflect.set(store.plugin, 'renderDrawing', vi.fn(async () => new Uint8Array([1, 2, 3])));
     await command(store.plugin, 'pushCurrentNote');
-    expect(JSON.parse(store.files.get('.obsidian/plugins/ntn-sync/media-origins.json')!)[key][0]).toMatchObject({
+    expect(JSON.parse(store.files.get('.obsidian/plugins/notion-handoff/media-origins.json')!)[key][0]).toMatchObject({
       id: 'drawing-block', original, source: 'plan.tldr', drawing: true,
     });
     expect(Notice.messages.at(-1)).toContain('Readback unavailable');
@@ -279,7 +354,7 @@ describe('plugin pull/push integration', () => {
     const tldraw = '![[attachments/Sketch.md]]';
     const excalidraw = '![[Drawing.excalidraw]]';
     const urls = ['https://example.com/tldraw.png', 'https://example.com/excalidraw.png'];
-    const blocks = urls.map((url, index) => ({ id: `image-${index}`, type: 'image', image: { external: { url } }, last_edited_time: 'v1' }));
+    const blocks = urls.map((url, index) => ({ id: `image-${index}`, type: 'image', has_children: false, image: { external: { url } }, last_edited_time: 'v1' }));
     const notion = server(`# Note\nRemote test\n![TLDraw](${urls[0]})\n![Excalidraw](${urls[1]})`, blocks);
     const body = `# Note\n\nLocal test\n\n${tldraw}\n\n${excalidraw}`;
     const source = `---\nnotion_id: page-id\n---\n${body}`;
@@ -287,7 +362,7 @@ describe('plugin pull/push integration', () => {
     store.files.set('attachments/Sketch.md', '---\ntldraw-file: true\n---\nDrawing');
     store.files.set('Drawing.excalidraw.md', 'Drawing');
     vi.mocked(store.app.metadataCache.getCache).mockImplementation((path) => path === 'attachments/Sketch.md' ? { frontmatter: { 'tldraw-file': true } } : null);
-    store.files.set('.obsidian/plugins/ntn-sync/media-origins.json', JSON.stringify({ [key]: [
+    store.files.set('.obsidian/plugins/notion-handoff/media-origins.json', JSON.stringify({ [key]: [
       { id: 'image-0', original: tldraw, source: 'attachments/Sketch.md', drawing: true },
       { id: 'image-1', original: excalidraw, source: 'Drawing.excalidraw.md', drawing: true },
     ] }));
@@ -307,9 +382,9 @@ describe('plugin pull/push integration', () => {
     click('Keep Obsidian'); click('Save merged note'); await pull;
     expect(store.files.get(store.note.path)).toBe(source);
     expect(store.binaries.size).toBe(0);
-    const origins = JSON.parse(store.files.get('.obsidian/plugins/ntn-sync/media-origins.json')!)[key];
+    const origins = JSON.parse(store.files.get('.obsidian/plugins/notion-handoff/media-origins.json')!)[key];
     expect(origins.map((origin: { original: string }) => origin.original)).toEqual([tldraw, excalidraw]);
-    expect(requestUrl).not.toHaveBeenCalled();
+    expect(vi.mocked(requestUrl).mock.calls.every(([request]) => (request as any).url.startsWith('https://api.notion.com/'))).toBe(true);
     expect(render).not.toHaveBeenCalled();
     await store.plugin.onload();
     blocks[0].last_edited_time = 'v2';
@@ -317,7 +392,7 @@ describe('plugin pull/push integration', () => {
     await command(store.plugin, 'pullCurrentNote');
     expect(store.files.get(store.note.path)).toBe(source);
     expect(Modal.opened).toHaveLength(1);
-    expect(requestUrl).not.toHaveBeenCalled();
+    expect(vi.mocked(requestUrl).mock.calls.every(([request]) => (request as any).url.startsWith('https://api.notion.com/'))).toBe(true);
     expect(render).not.toHaveBeenCalled();
   });
 
@@ -332,10 +407,10 @@ describe('plugin pull/push integration', () => {
 
   it('creates a page on push, then pulls its edits using the newly persisted ID and baseline', async () => {
     const notion = server('');
-    const run = vi.mocked(runNtn).getMockImplementation()!;
-    vi.mocked(runNtn).mockImplementation(async (...args) => {
-      if (args[2][1] === 'v1/pages' && args[2].includes('POST')) return JSON.stringify({ id: 'created-page' });
-      return run(...args);
+    const run = api.getMockImplementation()!;
+    api.mockImplementation(async (request) => {
+      if (request.path === '/v1/pages' && request.method === 'POST') return { id: 'created-page' };
+      return run(request);
     });
     const store = await setup('New note');
     await command(store.plugin, 'pushCurrentNote');
@@ -358,26 +433,95 @@ describe('plugin pull/push integration', () => {
     const pull = command(store.plugin, 'pullCurrentNote');
     await vi.waitFor(() => expect(Modal.opened).toHaveLength(1));
     click('Cancel'); await pull;
-    expect(vi.mocked(runNtn).mock.calls.every((call) => call[1] === 'work-token')).toBe(true);
+    expect(api.mock.calls.every(([request]) => request.token === 'work-token')).toBe(true);
     expect(store.files.get(store.note.path)).toBe(source);
+  });
+
+  it('isolates every push operation, including uploads and creation, to the selected profile', async () => {
+    let remote = '';
+    api.mockImplementation(async ({ path, method, body }) => {
+      if (path.includes('/file_uploads')) return { id: 'upload', status: path === '/v1/file_uploads' ? 'pending' : 'uploaded' };
+      if (path === '/v1/pages' && method === 'POST') return { id: 'work-page' };
+      if (path.includes('/markdown')) {
+        if (method === 'PATCH') remote = body.replace_content.new_str;
+        return { markdown: remote, truncated: false, unknown_block_ids: [] };
+      }
+      return { results: [], has_more: false };
+    });
+    const store = await setup('---\nnotion_workspace: Work\n---\n![[photo.png]]');
+    store.files.set('photo.png', 'fixture');
+    store.plugin.settings.profiles = [
+      { name: 'Default', token: 'default-token', parentId: 'default-parent' },
+      { name: 'Work', token: 'work-token', parentId: 'work-parent' },
+    ];
+    await command(store.plugin, 'pushCurrentNote');
+    await command(store.plugin, 'pushCurrentNote');
+    expect(api.mock.calls.every(([request]) => request.token === 'work-token')).toBe(true);
+    const creations = api.mock.calls.filter(([request]) => request.path === '/v1/pages');
+    expect(creations).toHaveLength(1);
+    expect(creations[0][0].body.parent.page_id).toBe('work-parent');
+    expect(api.mock.calls.some(([request]) => request.path.includes('/file_uploads/') && request.path.endsWith('/send'))).toBe(true);
+    expect(api.mock.calls.some(([request]) => request.path === '/v1/pages/work-page' && request.method === 'PATCH')).toBe(true);
+    expect(store.files.get(store.note.path)).toContain('notion_id: work-page');
+  });
+
+  it('persists a created ID before Markdown failure so retry does not duplicate the page', async () => {
+    const notion = server('');
+    const run = api.getMockImplementation()!;
+    let fail = true;
+    api.mockImplementation(async (request) => {
+      if (request.path === '/v1/pages' && request.method === 'POST') return { id: 'created-page' };
+      if (request.path.includes('/markdown') && request.method === 'PATCH' && fail) {
+        fail = false;
+        throw new Error('Network failure');
+      }
+      return run(request);
+    });
+    const store = await setup('New note');
+    await command(store.plugin, 'pushCurrentNote');
+    expect(store.files.get(store.note.path)).toContain('notion_id: created-page');
+    expect(Notice.messages.at(-1)).toContain('Network failure');
+    await command(store.plugin, 'pushCurrentNote');
+    expect(notion.read()).toBe('New note');
+    expect(api.mock.calls.filter(([request]) => request.path === '/v1/pages')).toHaveLength(1);
+  });
+
+  it.each([
+    { markdown: 'Partial', truncated: true, unknown_block_ids: [] },
+    { markdown: 'Partial', truncated: false, unknown_block_ids: ['hidden'] },
+    { markdown: 'Missing completeness flags' },
+  ])('refuses incomplete remote content on push and pull without writes: %j', async (response) => {
+    api.mockResolvedValue(response);
+    const source = '---\nnotion_id: page-id\n---\nLocal';
+    const store = await setup(source);
+    await command(store.plugin, 'pushCurrentNote');
+    await command(store.plugin, 'pullCurrentNote');
+    expect(store.files.get(store.note.path)).toBe(source);
+    expect(store.writes).toEqual([]);
+    expect(api.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
+    expect(Modal.opened).toEqual([]);
   });
 
   it('does not sync notes without notion_id or with corrupt checkpoints', async () => {
     const store = await setup('No frontmatter');
     await command(store.plugin, 'pullCurrentNote');
     expect(Notice.messages.at(-1)).toContain('no notion_id');
-    expect(runNtn).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
     store.files.set(statePath, '{broken');
     await store.plugin.onload();
     await command(store.plugin, 'pullCurrentNote');
     expect(Notice.messages.at(-1)).toContain('Repair sync-state.json');
-    expect(runNtn).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
   });
 
   it('leaves the note untouched when an image download fails', async () => {
     const url = 'https://example.com/image.png';
-    server(`![Image](${url})`, [{ id: 'image', type: 'image', image: { external: { url } } }]);
-    vi.mocked(requestUrl).mockRejectedValueOnce(new Error('Network error'));
+    server(`![Image](${url})`, [{ id: 'image', type: 'image', has_children: false, image: { external: { url } } }]);
+    const transport = vi.mocked(requestUrl).getMockImplementation()!;
+    vi.mocked(requestUrl).mockImplementation(async (request) => {
+      if ((request as any).url === url) throw new Error('Network error');
+      return Reflect.apply(transport, undefined, [request]);
+    });
     const source = '---\nnotion_id: page-id\n---\nLocal';
     const store = await setup(source);
     await command(store.plugin, 'pullCurrentNote');

@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { posix } from 'node:path';
+import { randomId } from './ids';
+import { posix } from 'path-browserify';
 import { isExcalidraw } from './attachments';
 import { isTldraw } from './tldraw';
 import { parseNote } from './note';
@@ -34,7 +34,7 @@ export async function resolveReferences(body: string, from: string, currentProfi
   const regex = /(!?)\[\[([^\]\n]+)\]\]/g;
   let output = '';
   let previous = 0;
-  const nonce = randomUUID().replace(/-/g, '');
+  const nonce = randomId();
   for (const [index, match] of [...body.matchAll(regex)].entries()) {
     output += body.slice(previous, match.index);
     previous = match.index + match[0].length;

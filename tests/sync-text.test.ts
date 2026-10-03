@@ -40,7 +40,7 @@ describe('whitespace-insensitive sync', () => {
   });
 
   it('ignores Notion autolink wrapping but not equivalent-looking examples inside code', () => {
-    const url = 'https://github.com/cajames/obsidian-notion-sync';
+    const url = 'https://github.com/cajames/obsidian-notion-handoff';
     expect(sameBody(`Repo: ${url}`, `Repo: [${url}](${url})`)).toBe(true);
     expect(sameBody(`\`${url}\``, `\`[${url}](${url})\``)).toBe(false);
   });

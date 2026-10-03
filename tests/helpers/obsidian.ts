@@ -16,7 +16,7 @@ export function createTestApp(source = '---\nnotion_id: page-id\n---\nLocal body
   const note = new TFile('Notes/Test.md');
   const files = new Map([[note.path, source]]);
   const binaries = new Map<string, ArrayBuffer>();
-  const folders = new Set(['.obsidian/plugins/ntn-sync', 'Notes']);
+  const folders = new Set(['.obsidian/plugins/notion-handoff', 'Notes']);
   const writes: string[] = [];
   const adapter = {
     exists: vi.fn(async (path: string) => files.has(path) || binaries.has(path) || folders.has(path)),
@@ -39,6 +39,7 @@ export function createTestApp(source = '---\nnotion_id: page-id\n---\nLocal body
     plugins: { getPlugin: vi.fn(() => null) },
     vault: {
       configDir: '.obsidian', adapter,
+      getConfig: vi.fn((_key: string) => 'Attachments'),
       read: vi.fn(async (file: { path: string }) => files.get(file.path)!),
       readBinary: vi.fn(async (file: { path: string }) => binaries.get(file.path) ?? new Uint8Array([1]).buffer),
       createFolder: vi.fn(async (path: string) => { folders.add(path); return { path }; }),
@@ -60,7 +61,7 @@ export class Plugin {
   commands: { id: string; name: string; callback: () => void }[] = [];
   loadData = vi.fn(async () => ({ profiles: [{ name: 'Default', token: 'test-token', parentId: 'parent-id' }], binary: 'ntn' }));
   saveData = vi.fn(async (_data: unknown) => {});
-  constructor(public app = createTestApp().app, public manifest = { id: 'ntn-sync', dir: '.obsidian/plugins/ntn-sync' }) {}
+  constructor(public app = createTestApp().app, public manifest = { id: 'notion-handoff', dir: '.obsidian/plugins/notion-handoff' }) {}
   addCommand(command: (typeof this.commands)[number]) { this.commands.push(command); }
   addSettingTab(_tab: unknown) {}
 }
@@ -109,7 +110,7 @@ export class Setting {
 }
 
 export const requestUrl = vi.fn(async (_request: unknown) => ({
-  status: 200, headers: { 'content-type': 'image/png' }, arrayBuffer: new Uint8Array([137, 80, 78, 71]).buffer,
+  status: 200, headers: { 'content-type': 'image/png' }, arrayBuffer: new Uint8Array([137, 80, 78, 71]).buffer, text: '',
 }));
 
 export function installDomHelpers() {

@@ -1,56 +1,66 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mentionsImported, pushMarkdownWithMentions } from '../src/mention-push';
+import { api, jsonResponse, testClient } from './helpers/notion';
+import { requestUrl } from './helpers/obsidian';
 
 const id = '01234567-89ab-cdef-0123-456789abcdef';
 const reference = { token: 'NTN_SYNC_NOTE_abc_0', id, label: 'Meeting', pending: 'Meeting (link pending)',
   mention: `<mention-page url="https://www.notion.so/${id.replace(/-/g, '')}">Meeting</mention-page>` };
+beforeEach(() => vi.clearAllMocks());
 
 describe('mention import and fallback', () => {
   it('confirms imported mentions via markdown readback', async () => {
-    const run = vi.fn(async (args: string[]) => args.includes('PATCH') ? '{}' : JSON.stringify({ markdown: reference.mention, truncated: false }));
-    expect(await pushMarkdownWithMentions(run, 'page', `See ${reference.token}`, [reference])).toEqual([]);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(mentionsImported(JSON.stringify({ markdown: reference.mention }), [reference])).toBe(true);
+    const client = testClient();
+    api.mockImplementation(async ({ method }) => method === 'PATCH' ? {} : { markdown: reference.mention, truncated: false, unknown_block_ids: [] });
+    expect(await pushMarkdownWithMentions(client, 'page', `See ${reference.token}`, [reference])).toEqual([]);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(mentionsImported({ markdown: reference.mention }, [reference])).toBe(true);
   });
 
-  it('retries with pending text when the PATCH rejects the mention', async () => {
-    let patches = 0;
-    const run = vi.fn(async (args: string[], stdin?: string) => {
-      if (args.includes('PATCH') && ++patches === 1) throw new Error('ntn exited with code 400: invalid mention');
-      return '{}';
-    });
-    expect(await pushMarkdownWithMentions(run, 'page', reference.token, [reference])).toEqual(['Meeting']);
-    expect(JSON.parse(run.mock.calls[0][1] || '')).toEqual({
-      type: 'replace_content', replace_content: { new_str: reference.mention },
-    });
-    expect(JSON.parse(run.mock.calls[1][1] || '')).toEqual({
-      type: 'replace_content', replace_content: { new_str: 'Meeting (link pending)' },
-    });
-    expect(run.mock.calls).toHaveLength(2);
+  it('retries with pending text when PATCH rejects the mention validation', async () => {
+    const client = testClient();
+    vi.mocked(requestUrl).mockResolvedValueOnce(jsonResponse({ object: 'error', code: 'validation_error', message: 'invalid mention' }, 400));
+    api.mockResolvedValue({});
+    expect(await pushMarkdownWithMentions(client, 'page', reference.token, [reference])).toEqual(['Meeting']);
+    const bodies = vi.mocked(requestUrl).mock.calls.map(([request]) => JSON.parse((request as any).body));
+    expect(bodies).toEqual([
+      { type: 'replace_content', replace_content: { new_str: reference.mention } },
+      { type: 'replace_content', replace_content: { new_str: reference.pending } },
+    ]);
   });
 
-  it('demotes mentions if PATCH succeeds but GET shows mangled or truncated markup', async () => {
-    const bodies: string[] = [];
-    const run = vi.fn(async (args: string[], stdin?: string) => {
-      if (args.includes('PATCH')) { bodies.push(JSON.parse(stdin || '').replace_content.new_str); return '{}'; }
-      return JSON.stringify({ markdown: 'Meeting', truncated: false });
-    });
-    expect(await pushMarkdownWithMentions(run, 'page', reference.token, [reference])).toEqual(['Meeting']);
-    expect(bodies).toEqual([reference.mention, reference.pending]);
-    expect(mentionsImported(JSON.stringify({ markdown: reference.mention, truncated: true }), [reference])).toBe(false);
+  it('demotes mentions if PATCH succeeds but GET shows mangled markup', async () => {
+    const client = testClient();
+    api.mockImplementation(async ({ method }) => method === 'PATCH' ? {} : { markdown: 'Meeting', truncated: false, unknown_block_ids: [] });
+    expect(await pushMarkdownWithMentions(client, 'page', reference.token, [reference])).toEqual(['Meeting']);
+    expect(api.mock.calls.filter(([request]) => request.method === 'PATCH').map(([request]) => request.body.replace_content.new_str)).toEqual([reference.mention, reference.pending]);
+    expect(mentionsImported({ markdown: reference.mention, truncated: true }, [reference])).toBe(false);
   });
 
   it('replaces Markdown without references using the required command type', async () => {
-    const run = vi.fn(async (_args: string[], _stdin?: string) => '{}');
-    expect(await pushMarkdownWithMentions(run, 'page', '# Title\n\nBody', [])).toEqual([]);
-    expect(run).toHaveBeenCalledExactlyOnceWith(
-      ['api', 'v1/pages/page/markdown', '-X', 'PATCH', '-d', '@-'],
-      JSON.stringify({ type: 'replace_content', replace_content: { new_str: '# Title\n\nBody' } }),
-    );
+    const client = testClient();
+    api.mockResolvedValue({});
+    expect(await pushMarkdownWithMentions(client, 'page', '# Title\n\nBody', [])).toEqual([]);
+    expect(api).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ method: 'PATCH', path: '/v1/pages/page/markdown', body: { type: 'replace_content', replace_content: { new_str: '# Title\n\nBody' } } }));
+  });
+
+  it.each([403, 503])('never demotes or replays on HTTP %s, even with references', async (status) => {
+    const client = testClient();
+    vi.mocked(requestUrl).mockResolvedValue(jsonResponse({ object: 'error', code: status === 403 ? 'restricted_resource' : 'service_unavailable', message: `HTTP ${status}` }, status));
+    await expect(pushMarkdownWithMentions(client, 'page', reference.token, [reference])).rejects.toThrow(`${status}`);
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{ markdown: 'Partial', truncated: true }, { markdown: 'Partial', unknown_block_ids: ['unknown'] }, {}])('rejects incomplete readback without another write: %j', async (data) => {
+    const client = testClient();
+    api.mockImplementation(async ({ method }) => method === 'PATCH' ? {} : data);
+    await expect(pushMarkdownWithMentions(client, 'page', reference.token, [reference])).rejects.toThrow('incomplete');
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
   it('propagates unrelated errors when no references exist', async () => {
-    await expect(pushMarkdownWithMentions(async () => { throw new Error('ntn exited with code 403'); }, 'page', 'body', []))
-      .rejects.toThrow('code 403');
+    const client = testClient();
+    api.mockRejectedValue(new Error('HTTP 403'));
+    await expect(pushMarkdownWithMentions(client, 'page', 'body', [])).rejects.toThrow('403');
   });
 });

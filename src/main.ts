@@ -1,12 +1,12 @@
 import { Component, Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl } from 'obsidian';
-import { posix } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { createArgs, createPayload, runNtn, titleArgs, titleProperty } from './cli';
+import { posix } from 'path-browserify';
+import { randomId } from './ids';
+import { createPayload, notionClient, titleProperty, uploadFile } from './notion';
 import { pushMarkdownWithMentions } from './mention-push';
 import { resolveReferences } from './references';
-import { isExcalidraw, parseEmbeds, parseUploadResult, prepareAttachments, uploadArgs } from './attachments';
+import { isExcalidraw, parseEmbeds, prepareAttachments } from './attachments';
 import { insertMedia } from './media';
-import { resolveAttachment } from './paths';
+import { imageImportFolder, resolveAttachment } from './paths';
 import { renderExcalidraw } from './excalidraw';
 import { isTldraw, renderTldraw } from './tldraw';
 import { parseNote, toNotionMarkdown, writeNotionId } from './note';
@@ -19,8 +19,8 @@ import { combineOrigins, makeOrigin, parseOrigins } from './media-origins';
 
 const DEFAULT_PROFILE = { name: 'Default', token: '', parentId: '' };
 
-export default class NtnSync extends Plugin {
-  settings = { profiles: [{ ...DEFAULT_PROFILE }], binary: 'ntn' };
+export default class NotionHandoff extends Plugin {
+  settings = { profiles: [{ ...DEFAULT_PROFILE }], imageImportFolder: '' };
   private syncing = false;
   private checkpoints: Record<string, ReturnType<typeof makeCheckpoint>> = {};
   private origins: Record<string, ReturnType<typeof makeOrigin>[]> = {};
@@ -30,7 +30,7 @@ export default class NtnSync extends Plugin {
     const saved = await this.loadData();
     this.settings = {
       profiles: Array.isArray(saved?.profiles) && saved.profiles.length ? saved.profiles : [{ ...DEFAULT_PROFILE }],
-      binary: typeof saved?.binary === 'string' ? saved.binary : 'ntn',
+      imageImportFolder: typeof saved?.imageImportFolder === 'string' ? saved.imageImportFolder : '',
     };
     try {
       const path = this.statePath();
@@ -41,7 +41,7 @@ export default class NtnSync extends Plugin {
       this.syncReady = false;
       new Notice(`Sync disabled: ${error instanceof Error ? error.message : String(error)}`, 12000);
     }
-    this.addSettingTab(new NtnSettings(this));
+    this.addSettingTab(new HandoffSettings(this));
     this.addCommand({
       id: 'push-to-notion',
       name: 'Push to Notion',
@@ -55,7 +55,7 @@ export default class NtnSync extends Plugin {
   }
 
   private activeNote() {
-    if (!this.syncReady) { new Notice('Repair sync-state.json / media-origins.json and reload Notion Sync before syncing.'); return null; }
+    if (!this.syncReady) { new Notice('Repair sync-state.json / media-origins.json and reload Notion Handoff before syncing.'); return null; }
     if (this.syncing) { new Notice('A Notion sync is already in progress.'); return null; }
     const file = this.app.workspace.getActiveFile();
     if (!(file instanceof TFile) || file.extension !== 'md') {
@@ -141,10 +141,9 @@ export default class NtnSync extends Plugin {
       if (!note.notionId) throw new Error('This note has no notion_id. Push it first, or add the target page ID.');
       const profile = resolveProfile(this.settings.profiles, note.notionWorkspace);
       const token = profile.token.trim();
-      if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Sync settings.`);
-      const run = (args: string[]) => runNtn(this.settings.binary.trim() || 'ntn', token, args);
-      await run(['--version']);
-      const remote = await readRemote(run, note.notionId);
+      if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
+      const client = notionClient(token);
+      const remote = await readRemote(client, note.notionId);
       const key = this.syncKey(token, note.notionId);
       const checkpoint = this.checkpoints[key] ?? null;
       const needsOrigins = checkpoint?.bindings.some((binding) => {
@@ -166,7 +165,12 @@ export default class NtnSync extends Plugin {
       const bindings = [...(checkpoint?.bindings ?? []), ...links.bindings.map((binding) => ({ ...binding, remote: canonicalReferences(binding.remote) }))];
       // Binding recovery must not fabricate a merge baseline on the first pull.
       const mapping = checkpoint ? { ...checkpoint, bindings } : makeCheckpoint('', '', '', bindings);
+      // Reading the attachment setting avoids creating folders before review.
+      // Obsidian's vault configuration accessor is not in its public types.
+      const getConfig = Reflect.get(this.app.vault, 'getConfig');
+      const attachments = typeof getConfig === 'function' ? getConfig.call(this.app.vault, 'attachmentFolderPath') : '';
       const prepared = await prepareRemote(remote, note.notionId, mapping, {
+        imageFolder: imageImportFolder(this.settings.imageImportFolder, typeof attachments === 'string' ? attachments : '', file.path),
         origins: this.origins[key] ?? [],
         drawingSource: (original) => this.drawingSource(original, file.path),
         exists: (path) => this.app.vault.adapter.exists(path),
@@ -182,7 +186,7 @@ export default class NtnSync extends Plugin {
         backup: async (original) => {
           const folder = `${posix.dirname(this.statePath())}/backups`;
           await this.ensureFolder(folder);
-          await this.app.vault.adapter.write(`${folder}/${Date.now()}-${randomUUID()}.md`, original);
+          await this.app.vault.adapter.write(`${folder}/${Date.now()}-${randomId()}.md`, original);
         },
         writeFile: async (path, bytes) => {
           await this.ensureFolder(posix.dirname(path), true);
@@ -257,15 +261,12 @@ export default class NtnSync extends Plugin {
     const profile = resolveProfile(this.settings.profiles, note.notionWorkspace);
     const token = profile.token.trim();
     const parentId = profile.parentId.trim();
-    if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Sync settings.`);
-    if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Sync settings.`);
-    const binary = this.settings.binary.trim() || 'ntn';
-    const run = (args: string[], stdin?: string | Buffer) => runNtn(binary, token, args, stdin);
-    // Preflight before any writes. ENOENT maps to an actionable install message.
-    await run(['--version']);
+    if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
+    if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Handoff settings.`);
+    const client = notionClient(token);
     let checkedFingerprint = '';
     if (note.notionId) {
-      const remote = await readRemote(run, note.notionId);
+      const remote = await readRemote(client, note.notionId);
       const checkpoint = this.checkpoints[this.syncKey(token, note.notionId)];
       const changed = checkpoint ? remote.fingerprint !== checkpoint.observed : !!remote.markdown.trim();
       if (changed && !await confirmPush(this.app, note.body, restoreBindings(remote.markdown, checkpoint?.bindings ?? []), !checkpoint)) return null;
@@ -285,12 +286,12 @@ export default class NtnSync extends Plugin {
       read: async (asset) => new Uint8Array(await this.app.vault.readBinary(asset as TFile)),
       isTldraw: (asset) => this.isTldraw(asset),
       render: (asset) => this.renderDrawing(asset, file.path),
-      upload: async (bytes, name, mime) => parseUploadResult(await run(uploadArgs(name, mime), Buffer.from(bytes))),
+      upload: (bytes, name, mime) => uploadFile(client, bytes, name, mime),
     });
     const markdown = toNotionMarkdown(prepared.markdown);
     // Attachment preparation may take time. Recheck immediately before page writes.
     if (note.notionId) {
-      const latest = await readRemote(run, note.notionId);
+      const latest = await readRemote(client, note.notionId);
       const checkpoint = this.checkpoints[this.syncKey(token, note.notionId)];
       if (latest.fingerprint !== checkedFingerprint &&
         !await confirmPush(this.app, note.body, restoreBindings(latest.markdown, checkpoint?.bindings ?? []), false)) return null;
@@ -298,28 +299,25 @@ export default class NtnSync extends Plugin {
     if (await this.app.vault.read(file) !== source) throw new Error('The note changed while preparing the push. Push again with the latest edits.');
     let pageId = note.notionId;
     if (!pageId) {
-      const result = await run(createArgs(), JSON.stringify(createPayload(parentId, file.basename)));
-      let response;
-      try { response = JSON.parse(result); }
-      catch { throw new Error('ntn returned an invalid page creation response.'); }
-      if (typeof response?.id !== 'string' || !response.id) throw new Error('ntn did not return a page ID.');
+      const response = await client.pages.create(createPayload(parentId, file.basename));
+      if (typeof response?.id !== 'string' || !response.id) throw new Error('Notion did not return a page ID. Check Notion before retrying creation.');
       const newId = String(response.id);
       // Persist first: if markdown upload fails, retry will update rather than create a duplicate.
       await this.app.vault.process(file, (current) => writeNotionId(current, newId));
       pageId = newId;
     } else {
-      await run(titleArgs(pageId), JSON.stringify({ properties: titleProperty(file.basename) }));
+      await client.pages.update({ page_id: pageId, properties: titleProperty(file.basename) });
     }
-    const demoted = await pushMarkdownWithMentions(run, pageId, markdown, links.references);
+    const demoted = await pushMarkdownWithMentions(client, pageId, markdown, links.references);
     const inserted: ReturnType<typeof makeOrigin>[] = [];
-    const issues = [...prepared.issues, ...await insertMedia(run, pageId, prepared.placements, (placement, id) => {
+    const issues = [...prepared.issues, ...await insertMedia(client, pageId, prepared.placements, (placement, id) => {
       if (placement.original) inserted.push(makeOrigin(id, placement.original, placement.source ?? '', placement.drawing ?? false));
     })];
     try {
       // Save provenance before readback; even a later checkpoint failure must not
       // lose the relationship between a drawing and its uploaded PNG block.
       await this.saveOrigins(this.syncKey(token, pageId), inserted);
-      const remote = await readRemote(run, pageId);
+      const remote = await readRemote(client, pageId);
       const bindings = links.bindings.map((binding) => {
         const reference = links.references.find((reference) => reference.mention === binding.remote);
         return { local: binding.local, remote: canonicalReferences(reference && demoted.includes(reference.label) ? reference.pending : binding.remote) };
@@ -338,12 +336,18 @@ export default class NtnSync extends Plugin {
   }
 }
 
-class NtnSettings extends PluginSettingTab {
-  constructor(private plugin: NtnSync) { super(plugin.app, plugin); }
+class HandoffSettings extends PluginSettingTab {
+  constructor(private plugin: NotionHandoff) { super(plugin.app, plugin); }
 
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    new Setting(containerEl).setName('Imported images folder')
+      .setDesc('Leave blank to use Obsidian’s attachment location. Or set a vault-relative folder, such as Attachments/Notion. Use / for the vault root. Existing imports are not moved.')
+      .addText((input) => input.setPlaceholder('Obsidian attachment location').setValue(this.plugin.settings.imageImportFolder).onChange(async (value) => {
+        this.plugin.settings.imageImportFolder = value;
+        await this.plugin.saveData(this.plugin.settings);
+      }));
     containerEl.createEl('h3', { text: 'Workspace profiles' });
     containerEl.createEl('p', { text: 'The first profile is the default. Each token belongs to one Notion workspace.' });
     this.plugin.settings.profiles.forEach((profile, index) => {
@@ -380,12 +384,6 @@ class NtnSettings extends PluginSettingTab {
         this.plugin.settings.profiles.push({ name: `Workspace ${this.plugin.settings.profiles.length + 1}`, token: '', parentId: '' });
         await this.plugin.saveData(this.plugin.settings);
         this.display();
-      }));
-    new Setting(containerEl).setName('Path to ntn binary')
-      .setDesc('Optional. Leave blank to resolve ntn from PATH.')
-      .addText((input) => input.setPlaceholder('ntn').setValue(this.plugin.settings.binary).onChange(async (value) => {
-        this.plugin.settings.binary = value;
-        await this.plugin.saveData(this.plugin.settings);
       }));
   }
 }

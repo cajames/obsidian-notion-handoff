@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prepareAttachments } from '../src/attachments';
 import { insertMedia } from '../src/media';
 import { isTldraw, renderTldraw } from '../src/tldraw';
+import { api, testClient } from './helpers/notion';
 
 const png = new Uint8Array([137, 80, 78, 71]);
 const drawing = { path: 'Drawings/plan.tldr', name: 'plan.tldr', stat: { size: 25 } };
@@ -57,15 +58,17 @@ describe('TLDraw image export', () => {
     expect(render).toHaveBeenCalledExactlyOnceWith(drawing);
     expect(read).not.toHaveBeenCalled();
     expect(drawImage).toHaveBeenCalledWith(expect.any(HTMLImageElement), 0, 0);
-    const run = vi.fn(async (_args: string[], _stdin?: string) => '{}');
-    run.mockResolvedValueOnce(JSON.stringify({ results: prepared.placements.map((place, index) => ({
+    const client = testClient();
+    api.mockClear();
+    api.mockResolvedValue({ results: [{ id: 'inserted' }] });
+    api.mockResolvedValueOnce({ results: prepared.placements.map((place, index) => ({
       id: `placeholder-${index}`, type: 'paragraph', paragraph: { rich_text: [{ plain_text: place.marker }] },
-    })) }));
-    expect(await insertMedia(run, 'page-id', prepared.placements)).toEqual([]);
-    expect(JSON.parse(run.mock.calls[1][1]!).children[0]).toMatchObject({
-      type: 'image', image: { type: 'file_upload', file_upload: { id: 'upload-id' }, caption: [{ text: { content: 'Sketch' } }] },
+    })), has_more: false });
+    expect(await insertMedia(client, 'page-id', prepared.placements)).toEqual([]);
+    expect(api.mock.calls[1][0].body.children[0]).toMatchObject({
+      image: { type: 'file_upload', file_upload: { id: 'upload-id' }, caption: [{ text: { content: 'Sketch' } }] },
     });
-    expect(JSON.parse(run.mock.calls[3][1]!).children[0].type).toBe('image');
+    expect(api.mock.calls[3][0].body.children[0]).toHaveProperty('image');
   });
 
   it('reloads blob-backed SVG previews as data URLs before drawing to avoid tainted canvases', async () => {
