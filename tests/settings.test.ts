@@ -44,7 +44,9 @@ describe('workspace and image settings', () => {
     expect(cards.map((card) => card.open)).toEqual([true, false]);
     expect(cards[0].querySelector('.nh-profile-name')?.textContent).toBe('Client');
     expect(store.tab.containerEl.querySelectorAll('.nh-badge')).toHaveLength(0);
-    expect(store.input('Notion API token').type).toBe('password');
+    expect(store.input('Notion access token').type).toBe('password');
+    expect(store.input('Notion access token').placeholder).toBe('ntn_…');
+    expect(store.tab.containerEl.textContent).toContain('integration token or OAuth access token');
     expect(store.tab.containerEl.textContent).not.toContain('private-token');
     expect(store.plugin.settings.profiles).toEqual(profiles);
     expect(store.saved).not.toHaveBeenCalled();

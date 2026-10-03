@@ -288,10 +288,8 @@ describe('workspace selection and durable note identity', () => {
     await command(store.plugin);
     store.plugin.settings.profiles[0].token = 'rotated-token';
     workspace.mockResolvedValue({ type: 'bot', bot: { workspace_id: 'workspace-one' } });
-    const push = command(store.plugin);
-    await vi.waitFor(() => expect(Modal.opened).toHaveLength(1));
-    Array.from(Modal.opened[0].contentEl.querySelectorAll('button')).find((button) => button.textContent === 'Push anyway')!.click();
-    await push;
+    await command(store.plugin);
+    expect(Modal.opened).toHaveLength(0);
     expect(api.mock.calls.filter(([request]) => request.path === '/v1/pages')).toHaveLength(1);
     expect(workspace.mock.calls.at(-1)?.[0]).toBe('rotated-token');
     expect(JSON.parse(store.files.get(linksPath)!)[store.note.path]).toMatchObject({ workspaceId: 'workspace-one', pageId: 'created-page' });

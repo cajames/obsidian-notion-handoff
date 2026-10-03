@@ -28,6 +28,16 @@ describe('Notion SDK via Obsidian requestUrl', () => {
     }
   });
 
+  it.each(['ntn_test_internal_token', 'ntn_test_oauth_access_token', 'secret_test_legacy_token'])('accepts %s as an opaque bearer token', async (token) => {
+    respond({ object: 'user', id: 'bot-id', type: 'bot', bot: { workspace_id: 'workspace-id' } });
+    const identity = await notionClient(token).users.me({});
+    expect(identity).toMatchObject({ type: 'bot', bot: { workspace_id: 'workspace-id' } });
+    expect(requestUrl).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      url: 'https://api.notion.com/v1/users/me',
+      headers: expect.objectContaining({ authorization: `Bearer ${token}` }),
+    }));
+  });
+
   it('isolates profiles and explicitly versions every operation', async () => {
     respond({ markdown: '', truncated: false });
     const work = notionClient('work-token');

@@ -67,13 +67,13 @@ export default class HandoffSettings extends PluginSettingTab {
             await this.plugin.saveData(this.plugin.settings);
           });
         });
-      new Setting(fields).setName('Notion API token').setDesc('Share your target pages with this integration.')
+      new Setting(fields).setName('Notion access token').setDesc('Paste an integration token or OAuth access token with access to your target pages.')
         .addText((input) => {
           input.inputEl.type = 'password';
           input.inputEl.autocomplete = 'off';
           input.inputEl.spellcheck = false;
-          input.inputEl.setAttribute('aria-label', 'Notion API token');
-          input.setPlaceholder('Paste integration token').setValue(profile.token).onChange(async (value) => {
+          input.inputEl.setAttribute('aria-label', 'Notion access token');
+          input.setPlaceholder('ntn_…').setValue(profile.token).onChange(async (value) => {
             profile.token = value;
             await this.plugin.saveData(this.plugin.settings);
           });

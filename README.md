@@ -45,7 +45,7 @@ BRAT handles installation and updates. Desktop and experimental mobile support a
 ## Notion setup
 
 1. [Create a Notion integration](https://www.notion.so/profile/integrations) with read, update, and insert content capabilities. Give it access to your target pages and a parent page for new notes.
-2. In Notion Handoff settings, add a workspace name, integration token, and parent page ID. Add a connection for each workspace you use.
+2. In Notion Handoff settings, add a workspace name, **Notion access token**, and parent page ID. Use an integration token or OAuth access token. Add a connection for each workspace you use.
 
 Choose a workspace when prompted; your note saves the choice. A single workspace is selected automatically.
 

@@ -10,7 +10,8 @@ import { fingerprint } from '../src/sync-remote';
 import { createTestApp, installDomHelpers, Modal, Notice, requestUrl } from './helpers/obsidian';
 
 const statePath = '.obsidian/plugins/notion-handoff/sync-state.json';
-const key = `${fingerprint('test-token').slice(0, 16)}:pageid`;
+const legacyKey = `${fingerprint('test-token').slice(0, 16)}:pageid`;
+const key = 'workspace:workspacedefault:pageid';
 const linksPath = '.obsidian/plugins/notion-handoff/note-links.json';
 const bound = (source: string, pageId = parseNote(source).notionId!) => writeNotionBinding(source, 'Default', 'workspace-default', pageId);
 
@@ -32,7 +33,7 @@ function server(initial: string, blocks: unknown[] = []) {
 
 async function setup(source: string, checkpoint: ReturnType<typeof makeCheckpoint> | null = null) {
   const store = createTestApp(source);
-  if (checkpoint) store.files.set(statePath, JSON.stringify({ [key]: checkpoint }));
+  if (checkpoint) store.files.set(statePath, JSON.stringify({ [legacyKey]: checkpoint }));
   const plugin = new NotionHandoff(store.app as never, { id: 'notion-handoff', name: 'Notion Handoff', version: '0.1.0', minAppVersion: '1.5.0', author: 'Test', description: 'Test', dir: '.obsidian/plugins/notion-handoff' });
   await plugin.onload();
   return { ...store, plugin };
@@ -367,7 +368,7 @@ describe('plugin pull/push integration', () => {
     store.files.set('attachments/Sketch.md', '---\ntldraw-file: true\n---\nDrawing');
     store.files.set('Drawing.excalidraw.md', 'Drawing');
     vi.mocked(store.app.metadataCache.getCache).mockImplementation((path) => path === 'attachments/Sketch.md' ? { frontmatter: { 'tldraw-file': true } } : null);
-    store.files.set('.obsidian/plugins/notion-handoff/media-origins.json', JSON.stringify({ [key]: [
+    store.files.set('.obsidian/plugins/notion-handoff/media-origins.json', JSON.stringify({ [legacyKey]: [
       { id: 'image-0', original: tldraw, source: 'attachments/Sketch.md', drawing: true },
       { id: 'image-1', original: excalidraw, source: 'Drawing.excalidraw.md', drawing: true },
     ] }));

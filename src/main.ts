@@ -148,8 +148,8 @@ export default class NotionHandoff extends Plugin {
     return bound;
   }
 
-  private async saveOrigins(key: string, added: ReturnType<typeof makeOrigin>[]) {
-    const next = { ...this.origins, [key]: combineOrigins(this.origins[key] ?? [], added) };
+  private async saveOrigins(key: string, added: ReturnType<typeof makeOrigin>[], previous = this.origins[key] ?? []) {
+    const next = { ...this.origins, [key]: combineOrigins(previous, added) };
     await this.app.vault.adapter.write(this.originPath(), JSON.stringify(next, null, 2));
     this.origins = next;
   }
@@ -167,8 +167,27 @@ export default class NotionHandoff extends Plugin {
     return file && (isExcalidraw(file.path) || this.isTldraw(file)) ? file.path : null;
   }
 
-  private syncKey(token: string, pageId: string) {
-    return `${fingerprint(token).slice(0, 16)}:${pageId.replace(/-/g, '').toLowerCase()}`;
+  private syncKey(workspaceId: string, pageId: string) {
+    return `workspace:${workspaceId.replace(/-/g, '').toLowerCase()}:${pageId.replace(/-/g, '').toLowerCase()}`;
+  }
+
+  // Called only after workspace verification. Adopt legacy state on successful
+  // sync, keeping the original entries intact and cancellation write-free.
+  private history(workspaceId: string, pageId: string, token: string, bound: boolean) {
+    const key = this.syncKey(workspaceId, pageId);
+    const page = pageId.replace(/-/g, '').toLowerCase();
+    const legacy = `${fingerprint(token).slice(0, 16)}:${page}`;
+    const previous = (keys: string[]) => {
+      if (!bound || keys.includes(legacy)) return legacy;
+      const candidates = keys.filter((candidate) => /^[a-f0-9]{16}:/.test(candidate) && candidate.slice(17) === page);
+      if (candidates.length > 1) throw new Error('Multiple legacy histories exist for this page. Restore the previous access token or repair sync-state.json / media-origins.json before syncing.');
+      return candidates[0] ?? legacy;
+    };
+    return {
+      key,
+      checkpoint: this.checkpoints[key] ?? this.checkpoints[previous(Object.keys(this.checkpoints))] ?? null,
+      origins: this.origins[key] ?? this.origins[previous(Object.keys(this.origins))] ?? [],
+    };
   }
 
   private async saveCheckpoint(key: string, checkpoint: ReturnType<typeof makeCheckpoint>) {
@@ -196,18 +215,19 @@ export default class NotionHandoff extends Plugin {
       if (!profile) { new Notice('Notion pull cancelled.'); return; }
       const workspaceName = profile.name.trim();
       const token = profile.token.trim();
-      if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
+      if (!token) throw new Error(`Add a Notion access token for "${profile.name}" in Notion Handoff settings.`);
       const client = notionClient(token);
       const workspaceId = await verifiedWorkspace(client, note, this.noteLinks[file.path]);
       const boundSource = writeNotionBinding(source, workspaceName, workspaceId, note.notionId);
       const remote = await readRemote(client, note.notionId);
-      const key = this.syncKey(token, note.notionId);
-      const checkpoint = this.checkpoints[key] ?? null;
+      const history = this.history(workspaceId, note.notionId, token, !!(note.notionWorkspaceId || this.noteLinks[file.path]));
+      const { key, checkpoint } = history;
       const needsOrigins = checkpoint?.bindings.some((binding) => {
         const source = this.drawingSource(binding.local, file.path);
-        return source && !(this.origins[key] ?? []).some((origin) => origin.drawing && origin.source === source);
+        return source && !history.origins.some((origin) => origin.drawing && origin.source === source);
       });
-      if (checkpoint && remote.fingerprint === checkpoint.observed && !needsOrigins && boundSource === source && this.noteLinks[file.path]) {
+      const needsMigration = !this.checkpoints[key] || !this.origins[key];
+      if (checkpoint && !needsMigration && remote.fingerprint === checkpoint.observed && !needsOrigins && boundSource === source && this.noteLinks[file.path]) {
         new Notice(`${file.basename} is up to date; local edits kept.`);
         return;
       }
@@ -229,7 +249,7 @@ export default class NotionHandoff extends Plugin {
       const attachments = typeof getConfig === 'function' ? getConfig.call(this.app.vault, 'attachmentFolderPath') : '';
       const prepared = await prepareRemote(remote, note.notionId, mapping, {
         imageFolder: imageImportFolder(this.settings.imageImportFolder, typeof attachments === 'string' ? attachments : '', file.path),
-        origins: this.origins[key] ?? [],
+        origins: history.origins,
         drawingSource: (original) => this.drawingSource(original, file.path),
         exists: (path) => this.app.vault.adapter.exists(path),
         download: async (url) => {
@@ -323,14 +343,15 @@ export default class NotionHandoff extends Plugin {
     const workspaceName = profile.name.trim();
     const token = profile.token.trim();
     const parentId = profile.parentId.trim();
-    if (!token) throw new Error(`Add a Notion API token for "${profile.name}" in Notion Handoff settings.`);
+    if (!token) throw new Error(`Add a Notion access token for "${profile.name}" in Notion Handoff settings.`);
     if (!note.notionId && !parentId) throw new Error(`Add a default parent page ID for "${profile.name}" in Notion Handoff settings.`);
     const client = notionClient(token);
     const workspaceId = await verifiedWorkspace(client, note, this.noteLinks[file.path]);
+    const history = note.notionId ? this.history(workspaceId, note.notionId, token, !!(note.notionWorkspaceId || this.noteLinks[file.path])) : null;
     let checkedFingerprint = '';
     if (note.notionId) {
       const remote = await readRemote(client, note.notionId);
-      const checkpoint = this.checkpoints[this.syncKey(token, note.notionId)];
+      const checkpoint = history?.checkpoint;
       const changed = checkpoint ? remote.fingerprint !== checkpoint.observed : !!remote.markdown.trim();
       if (changed && !await confirmPush(this.app, note.body, restoreBindings(remote.markdown, checkpoint?.bindings ?? []), !checkpoint)) return null;
       if (await this.app.vault.read(file) !== source) throw new Error('The note changed while checking Notion. Push again with the latest edits.');
@@ -356,7 +377,7 @@ export default class NotionHandoff extends Plugin {
     // Attachment preparation may take time. Recheck immediately before page writes.
     if (note.notionId) {
       const latest = await readRemote(client, note.notionId);
-      const checkpoint = this.checkpoints[this.syncKey(token, note.notionId)];
+      const checkpoint = history?.checkpoint;
       if (latest.fingerprint !== checkedFingerprint &&
         !await confirmPush(this.app, note.body, restoreBindings(latest.markdown, checkpoint?.bindings ?? []), false)) return null;
     }
@@ -382,7 +403,7 @@ export default class NotionHandoff extends Plugin {
     try {
       // Save provenance before readback; even a later checkpoint failure must not
       // lose the relationship between a drawing and its uploaded PNG block.
-      await this.saveOrigins(this.syncKey(token, pageId), inserted);
+      await this.saveOrigins(this.syncKey(workspaceId, pageId), inserted, history?.origins ?? []);
       const remote = await readRemote(client, pageId);
       const bindings = links.bindings.map((binding) => {
         const reference = links.references.find((reference) => reference.mention === binding.remote);
@@ -394,7 +415,7 @@ export default class NotionHandoff extends Plugin {
           (asset ? remoteEmbeds(note.body).find((original) => urlIdentity(original.url) === urlIdentity(asset.url))?.original : undefined);
         if (local) bindings.push({ remote: embed.original, local });
       }
-      await this.saveCheckpoint(this.syncKey(token, pageId), makeCheckpoint(note.body, restoreBindings(remote.markdown, bindings), remote.fingerprint, bindings));
+      await this.saveCheckpoint(this.syncKey(workspaceId, pageId), makeCheckpoint(note.body, restoreBindings(remote.markdown, bindings), remote.fingerprint, bindings));
     } catch (error) {
       issues.push(`Page pushed, but no new sync checkpoint was saved: ${error instanceof Error ? error.message : String(error)}. Pull may require review.`);
     }
