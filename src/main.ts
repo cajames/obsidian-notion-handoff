@@ -18,7 +18,7 @@ import { confirmPush, pickWorkspace, reviewPull } from './sync-modals';
 import { combineOrigins, makeOrigin, parseOrigins } from './media-origins';
 import HandoffSettings from './settings';
 import { uiStyles } from './ui-styles';
-import { parseNoteLinks, verifiedWorkspace } from './note-links';
+import { notionPageUrl, parseNoteLinks, sameId, verifiedWorkspace } from './note-links';
 
 const EMPTY_PROFILE = { name: 'Workspace 1', token: '', parentId: '' };
 
@@ -63,6 +63,36 @@ export default class NotionHandoff extends Plugin {
       name: 'Pull from Notion',
       callback: () => { void this.pullCurrentNote(); },
     });
+    this.addCommand({
+      id: 'open-in-notion',
+      name: 'Open in Notion',
+      callback: () => { void this.openInNotion(); },
+    });
+  }
+
+  assertProfileWorkspace(name: string, workspaceId: string) {
+    const assigned = Object.values(this.noteLinks).filter((link) => link.workspaceName.trim().toLowerCase() === name.trim().toLowerCase());
+    if (assigned.some((link) => !sameId(link.workspaceId, workspaceId))) {
+      throw new Error(`This token belongs to a different workspace than the notes assigned to "${name}". Add a separate workspace profile.`);
+    }
+  }
+
+  private async openInNotion() {
+    try {
+      const file = this.app.workspace.getActiveFile();
+      if (!(file instanceof TFile) || file.extension !== 'md') throw new Error('Open a Markdown note first.');
+      const note = parseNote(await this.app.vault.read(file));
+      const saved = this.noteLinks[file.path];
+      if (saved && ((note.notionId && !sameId(note.notionId, saved.pageId)) ||
+        (note.notionWorkspaceId && !sameId(note.notionWorkspaceId, saved.workspaceId)))) {
+        throw new Error('This note conflicts with its saved workspace/page binding. Restore its original IDs before opening.');
+      }
+      const pageId = note.notionId ?? saved?.pageId;
+      if (!pageId) throw new Error('Push this note first to create its Notion page.');
+      window.open(notionPageUrl(pageId), '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      new Notice(`Open in Notion: ${error instanceof Error ? error.message : String(error)}`, 10000);
+    }
   }
 
   private activeNote() {

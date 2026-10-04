@@ -18,6 +18,14 @@ Each bound note keeps its workspace name, actual workspace ID and page ID in fro
 
 New pages use a non-empty string `title` frontmatter property, otherwise the current filename without its extension. Existing pages receive content updates only; Push never updates page-title properties, and Pull never renames files or rewrites their local titles.
 
+## Setup and navigation
+
+**Test connection** reads `users.me` and, when configured, retrieves the parent page to confirm read access. Existing note associations for that workspace name must match the token’s workspace. Insert/update capabilities are configured in Notion; testing does not publish content.
+
+**Choose parent page** opens a keyboard-friendly title search. Debounced `/search` POST requests are read-only, scoped to pages accessible to the selected token, and exclude trash. Pagination is checked; incomplete queries, unreadable pages and cursor loops require a refined search or retry. The selected page is retrieved again before saving its ID. Stale settings, removed/rerendered profiles and cancelled prompts never save a selection. These actions are user-triggered and do not modify notes or sync state.
+
+**Open in Notion** builds an official HTTPS page URL from a validated page ID, using frontmatter or its saved recovery association. Conflicting associations are rejected. Opening a page needs no token or API request and does not change local data.
+
 ## Bounded retries
 
 The SDK makes at most three attempts per API call (two retries):

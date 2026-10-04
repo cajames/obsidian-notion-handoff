@@ -10,6 +10,7 @@ Keep background research local. Share the notes you choose. You decide when to p
 
 - **Push notes:** publish an Obsidian note to Notion, then push updates when you're ready.
 - **Pull edits:** bring Notion changes back into Obsidian.
+- **Open in Notion:** jump to the note's linked page from the command palette.
 - **Upload images and files:** include attachments where they're embedded in your note. Pull new images into your chosen attachment folder.
 
 ## What makes it different
@@ -45,7 +46,8 @@ BRAT handles installation and updates. Desktop and experimental mobile support a
 ## Notion setup
 
 1. [Create a Notion integration](https://www.notion.so/profile/integrations) with read, update, and insert content capabilities. Give it access to your target pages and a parent page for new notes.
-2. In Notion Handoff settings, add a workspace name, **Notion access token**, and parent page ID. Use an integration token or OAuth access token. Add a connection for each workspace you use.
+2. In Notion Handoff settings, add a workspace name and **Notion access token**. Use an integration token or OAuth access token. Add a connection for each workspace you use.
+3. Click **Test connection** to confirm the workspace, then **Choose parent page** to find the page for new notes by title.
 
 Choose a workspace when prompted; your note saves the choice. A single workspace is selected automatically.
 

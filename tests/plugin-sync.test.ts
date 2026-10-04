@@ -66,7 +66,7 @@ describe('plugin pull/push integration', () => {
     server(base.replace('Ending', 'Notion ending'));
     const source = `---\nnotion_id: page-id\ntags: [project]\n---\n${base.replace('Intro', 'Local intro')}`;
     const store = await setup(source, makeCheckpoint(base, base, fingerprint(base)));
-    expect(Reflect.get(store.plugin, 'commands').map((cmd: { id: string }) => cmd.id)).toEqual(['push-to-notion', 'pull-from-notion']);
+    expect(Reflect.get(store.plugin, 'commands').map((cmd: { id: string }) => cmd.id)).toEqual(['push-to-notion', 'pull-from-notion', 'open-in-notion']);
     expect(requestUrl).not.toHaveBeenCalled();
     expect(Reflect.get(store.plugin, 'saveData')).not.toHaveBeenCalled();
     expect(store.plugin.settings).not.toHaveProperty('binary');

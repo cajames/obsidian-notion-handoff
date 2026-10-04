@@ -40,13 +40,13 @@ describe('workspace and image settings', () => {
       { name: 'Other client', token: 'private-token-two', parentId: 'parent-two' },
     ];
     const store = setup('', profiles);
-    const cards = Array.from(store.tab.containerEl.querySelectorAll('details'));
+    const cards = Array.from(store.tab.containerEl.querySelectorAll<HTMLDetailsElement>('.nh-profile'));
     expect(cards.map((card) => card.open)).toEqual([true, false]);
     expect(cards[0].querySelector('.nh-profile-name')?.textContent).toBe('Client');
     expect(store.tab.containerEl.querySelectorAll('.nh-badge')).toHaveLength(0);
     expect(store.input('Notion access token').type).toBe('password');
     expect(store.input('Notion access token').placeholder).toBe('ntn_…');
-    expect(store.tab.containerEl.textContent).toContain('integration token or OAuth access token');
+    expect(store.tab.containerEl.textContent).toContain('Integration token or OAuth access token');
     expect(store.tab.containerEl.textContent).not.toContain('private-token');
     expect(store.plugin.settings.profiles).toEqual(profiles);
     expect(store.saved).not.toHaveBeenCalled();
@@ -54,14 +54,14 @@ describe('workspace and image settings', () => {
     expect(requestUrl).not.toHaveBeenCalled();
   });
 
-  it('updates the workspace heading and frontmatter hint without replacing the focused input', async () => {
+  it('updates the workspace heading without replacing the focused input', async () => {
     const store = setup();
     const input = store.input('Workspace name');
     input.focus();
     store.changeInput('Workspace name', 'Client "A"');
     await vi.waitFor(() => expect(store.saved).toHaveBeenCalledTimes(1));
     expect(store.tab.containerEl.querySelector('.nh-profile-name')?.textContent).toBe('Client "A"');
-    expect(store.tab.containerEl.querySelector('code')?.textContent).toBe('notion_workspace: "Client \\"A\\""');
+    expect(store.tab.containerEl.querySelector('code')).toBeNull();
     expect(store.input('Workspace name')).toBe(input);
     expect(document.activeElement).toBe(input);
     expect(store.plugin.settings.profiles[0].token).toBe('test-token');
@@ -71,14 +71,14 @@ describe('workspace and image settings', () => {
     const store = setup();
     expect(store.button('Remove profile').disabled).toBe(true);
     store.button('Add workspace').click();
-    await vi.waitFor(() => expect(store.tab.containerEl.querySelectorAll('details')).toHaveLength(2));
-    const cards = Array.from(store.tab.containerEl.querySelectorAll('details'));
+    await vi.waitFor(() => expect(store.tab.containerEl.querySelectorAll('.nh-profile')).toHaveLength(2));
+    const cards = Array.from(store.tab.containerEl.querySelectorAll<HTMLDetailsElement>('.nh-profile'));
     expect(cards[1].open).toBe(true);
     expect(document.activeElement).toBe(cards[1].querySelector('input'));
     expect(store.plugin.settings.profiles.map((profile) => profile.name)).toEqual(['Client', 'Workspace 2']);
     expect(store.tab.containerEl.querySelectorAll('.nh-badge')).toHaveLength(0);
     store.button('Remove profile').click();
-    await vi.waitFor(() => expect(store.tab.containerEl.querySelectorAll('details')).toHaveLength(1));
+    await vi.waitFor(() => expect(store.tab.containerEl.querySelectorAll('.nh-profile')).toHaveLength(1));
     expect(store.plugin.settings.profiles[0].name).toBe('Workspace 2');
     expect(store.button('Remove profile').disabled).toBe(true);
     expect(store.files.get(store.note.path)).toContain('Local body');
@@ -140,14 +140,31 @@ describe('workspace and image settings', () => {
     const store = setup('Assets/Notion');
     store.changeInput('Imported images folder', '../outside');
     expect(store.input('Imported images folder').getAttribute('aria-invalid')).toBe('true');
-    expect(store.tab.containerEl.querySelector<HTMLElement>('[role=status]')!.hidden).toBe(false);
+    expect(store.tab.containerEl.querySelector<HTMLElement>('#notion-handoff-folder-error')!.hidden).toBe(false);
     expect(store.plugin.settings.imageImportFolder).toBe('Assets/Notion');
     expect(store.saved).not.toHaveBeenCalled();
     store.changeInput('Imported images folder', 'Client assets');
     await vi.waitFor(() => expect(store.saved).toHaveBeenCalledTimes(1));
     expect(store.input('Imported images folder').hasAttribute('aria-invalid')).toBe(false);
-    expect(store.tab.containerEl.querySelector<HTMLElement>('[role=status]')!.hidden).toBe(true);
+    expect(store.tab.containerEl.querySelector<HTMLElement>('#notion-handoff-folder-error')!.hidden).toBe(true);
     expect(store.plugin.settings.imageImportFolder).toBe('Client assets');
+  });
+
+  it('keeps manual parent IDs under Advanced and makes the picker primary without saving settings', () => {
+    const store = setup();
+    const advanced = store.tab.containerEl.querySelector<HTMLDetailsElement>('.nh-advanced')!;
+    expect(advanced.open).toBe(false);
+    expect(advanced.contains(store.input('Parent page ID'))).toBe(true);
+    expect(store.button('Choose parent page').classList.contains('mod-cta')).toBe(true);
+    expect(store.tab.containerEl.querySelector('code')).toBeNull();
+    expect(store.tab.containerEl.querySelector('.nh-profile-footer')?.textContent).not.toContain('notion_workspace');
+    expect(store.plugin.settings.profiles[0].parentId).toBe('parent-id');
+    expect(store.saved).not.toHaveBeenCalled();
+    expect(requestUrl).not.toHaveBeenCalled();
+    advanced.open = true;
+    store.changeInput('Parent page ID', 'replacement-page');
+    expect(store.plugin.settings.profiles[0].parentId).toBe('replacement-page');
+    expect(store.saved).toHaveBeenCalledTimes(1);
   });
 
   it('loads bundled scoped styles and removes them when the plugin unloads', async () => {

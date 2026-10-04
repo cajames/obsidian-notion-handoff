@@ -97,6 +97,66 @@ export class Modal {
   close() { if (!this.opened) return; this.opened = false; this.onClose(); this.contentEl.remove(); }
 }
 
+export function debounce<T extends unknown[], V>(callback: (...args: T) => V, timeout = 0, resetTimer = false) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: T | undefined;
+  const run = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    const args = pending;
+    pending = undefined;
+    if (args) return callback(...args);
+  };
+  const debounced = (...args: T) => {
+    pending = args;
+    if (!timer || resetTimer) { clearTimeout(timer); timer = setTimeout(run, timeout); }
+    return debounced;
+  };
+  debounced.cancel = () => { clearTimeout(timer); timer = undefined; pending = undefined; return debounced; };
+  debounced.run = run;
+  return debounced;
+}
+
+export class FuzzySuggestModal<T> extends Modal {
+  inputEl = document.createElement('input');
+  resultContainerEl = document.createElement('div');
+  emptyStateText = '';
+  setPlaceholder(value: string) { this.inputEl.placeholder = value; }
+  setInstructions(_instructions: { command: string; purpose: string }[]) {}
+  getItems(): T[] { return []; }
+  getItemText(item: T) { return String(item); }
+  onChooseItem(_item: T, _event: MouseEvent | KeyboardEvent) {}
+  getSuggestions(query: string) {
+    return this.getItems().filter((item) => this.getItemText(item).toLowerCase().includes(query.toLowerCase())).map((item) => ({ item }));
+  }
+  selectSuggestion(value: { item: T }, event: MouseEvent | KeyboardEvent) {
+    this.close();
+    this.onChooseItem(value.item, event);
+  }
+  onOpen() {
+    this.contentEl.append(this.inputEl, this.resultContainerEl);
+    const render = () => {
+      const suggestions = this.getSuggestions(this.inputEl.value);
+      this.resultContainerEl.replaceChildren();
+      if (!suggestions.length) { this.resultContainerEl.textContent = this.emptyStateText; return; }
+      for (const suggestion of suggestions) {
+        const button = document.createElement('button');
+        button.textContent = this.getItemText(suggestion.item);
+        button.addEventListener('click', (event) => this.selectSuggestion(suggestion, event));
+        this.resultContainerEl.append(button);
+      }
+    };
+    this.inputEl.addEventListener('input', render);
+    this.inputEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') this.close();
+      const selected = this.getSuggestions(this.inputEl.value)[0];
+      if (event.key === 'Enter' && selected) this.selectSuggestion(selected, event);
+    });
+    render();
+    this.inputEl.focus();
+  }
+}
+
 export class ButtonComponent {
   buttonEl = document.createElement('button');
   constructor(container: HTMLElement) { this.buttonEl.type = 'button'; container.append(this.buttonEl); }

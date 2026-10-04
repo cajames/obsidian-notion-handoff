@@ -22,11 +22,23 @@ export function parseNoteLinks(raw: string) {
   }));
 }
 
-export async function verifiedWorkspace(client: ReturnType<typeof notionClient>, note: ReturnType<typeof parseNote>, saved?: ReturnType<typeof parseNoteLinks>[string]) {
+export function notionPageUrl(id: string) {
+  const compact = id.trim().replace(/-/g, '').toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(compact)) throw new Error('Use a valid Notion page ID.');
+  return `https://www.notion.so/${compact}`;
+}
+
+export async function readWorkspace(client: ReturnType<typeof notionClient>) {
   const user = await client.users.me({});
   const bot = user?.type === 'bot' ? user.bot : null;
   const workspaceId = bot && typeof bot === 'object' && 'workspace_id' in bot ? bot.workspace_id : null;
   if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('Notion did not return a workspace ID; refusing to sync.');
+  const name = bot && 'workspace_name' in bot && typeof bot.workspace_name === 'string' ? bot.workspace_name.trim() || null : null;
+  return { id: workspaceId, name };
+}
+
+export async function verifiedWorkspace(client: ReturnType<typeof notionClient>, note: ReturnType<typeof parseNote>, saved?: ReturnType<typeof parseNoteLinks>[string]) {
+  const { id: workspaceId } = await readWorkspace(client);
   if (note.notionWorkspaceId && !sameId(note.notionWorkspaceId, workspaceId)) {
     throw new Error('This token belongs to a different Notion workspace than the note’s saved workspace ID. Nothing was uploaded.');
   }

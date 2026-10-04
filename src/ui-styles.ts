@@ -3,12 +3,20 @@ export const uiStyles = `
 .notion-handoff-settings {
   color: var(--text-normal);
   font-family: var(--font-interface);
-  max-width: 850px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
   container-type: inline-size;
   container-name: nh-settings;
 }
-.notion-handoff-settings .nh-section + .nh-section { margin-top: 32px; }
+.vertical-tab-content.notion-handoff-settings,
+.modal.mod-settings .vertical-tab-content.notion-handoff-settings,
+.modal.mod-settings .setting-page > .setting-page-content.notion-handoff-settings {
+  padding-inline: 16px;
+  padding-top: 20px;
+}
+.notion-handoff-settings .nh-section + .nh-section { margin-top: 24px; }
 .notion-handoff-settings .nh-section-heading {
   display: flex;
   align-items: center;
@@ -17,12 +25,13 @@ export const uiStyles = `
 }
 .notion-handoff-settings h2 {
   margin: 0;
+  padding: 0;
   font-size: var(--font-ui-large, 20px);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 .notion-handoff-settings .nh-section-description {
-  margin: 8px 0 18px;
+  margin: 6px 0 12px;
   color: var(--text-muted);
   font-size: var(--font-ui-small, 14px);
   line-height: 1.5;
@@ -39,7 +48,7 @@ export const uiStyles = `
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px 18px;
+  padding: 12px 14px;
   background: var(--background-secondary);
   cursor: pointer;
   list-style: none;
@@ -60,32 +69,23 @@ export const uiStyles = `
 .notion-handoff-settings .nh-profile-order { display: flex; flex-shrink: 0; gap: 6px; margin-left: auto; }
 .notion-handoff-settings .nh-profile-order button { width: 30px; height: 30px; padding: 0; }
 .notion-handoff-settings .nh-profile-order svg { width: 14px; height: 14px; }
-.notion-handoff-settings .nh-profile-fields { padding: 0 18px; }
-.notion-handoff-settings .nh-profile-hint {
-  margin: 14px 0 0;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller, 12px);
-  overflow-wrap: anywhere;
-}
-.notion-handoff-settings .nh-profile-hint code {
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-}
+.notion-handoff-settings .nh-profile-fields { padding: 0 14px; }
+.notion-handoff-settings .nh-advanced { border-top: 1px solid var(--background-modifier-border); padding: 8px 0; }
+.notion-handoff-settings .nh-advanced > summary { color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); cursor: pointer; }
+.notion-handoff-settings .nh-advanced .setting-item { padding: 8px 0 0; border-top: 0; }
 .notion-handoff-settings .setting-item {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 14px;
   margin: 0;
-  padding: 15px 0;
+  padding: 10px 0;
   border: 0;
   border-top: 1px solid var(--background-modifier-border);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.notion-handoff-settings .nh-profile-hint + .setting-item,
+.notion-handoff-settings .nh-profile-fields > .setting-item:first-child,
 .notion-handoff-settings .nh-image-settings > .setting-item:first-child { border-top: 0; }
 .notion-handoff-settings .setting-item-info { flex: 1; min-width: 0; margin: 0; }
 .notion-handoff-settings .setting-item-name {
@@ -95,14 +95,16 @@ export const uiStyles = `
 }
 .notion-handoff-settings .setting-item-description {
   color: var(--text-muted);
-  margin-top: 4px;
+  margin-top: 2px;
+  padding-top: 0;
   font-size: var(--font-ui-smaller, 12px);
-  line-height: 1.5;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .notion-handoff-settings .setting-item-control {
-  flex: 0 1 45%;
+  flex: 0 1 55%;
   min-width: 0;
-  max-width: 340px;
+  max-width: none;
   padding: 0;
 }
 .notion-handoff-settings .setting-item-control input,
@@ -112,15 +114,19 @@ export const uiStyles = `
   min-height: 36px;
   font-size: var(--font-ui-small, 14px);
 }
+.notion-handoff-settings .nh-parent-setting .setting-item-control { flex-basis: 70%; }
+.notion-handoff-settings .nh-connection-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.notion-handoff-settings .nh-connection-status { margin: 0 0 10px; padding: 0; color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); line-height: 1.5; overflow-wrap: anywhere; }
+.notion-handoff-settings .nh-connection-status[data-state="error"] { color: var(--text-error); }
+.modal.notion-handoff-page-picker { width: min(620px, calc(100vw - 32px)); }
 .notion-handoff-settings .nh-profile-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-end;
+  gap: 12px;
   border-top: 1px solid var(--background-modifier-border);
-  padding: 10px 18px;
+  padding: 8px 14px;
 }
-.notion-handoff-settings .nh-profile-footer span,
 .notion-handoff-settings .nh-footnote {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller, 12px);
@@ -131,7 +137,7 @@ export const uiStyles = `
   font-size: var(--font-ui-smaller, 12px);
 }
 .notion-handoff-settings .nh-footnote { margin: 12px 0 0; }
-.notion-handoff-settings .nh-image-settings { padding: 0 18px; }
+.notion-handoff-settings .nh-image-settings { padding: 0 14px; }
 .notion-handoff-settings .nh-field-error {
   margin: 0 0 14px;
   color: var(--text-error);
@@ -279,14 +285,15 @@ export const uiStyles = `
   border: 1px solid transparent;
 }
 .notion-handoff-push .nh-push-actions .mod-warning:hover { filter: brightness(1.08); }
-@container nh-settings (max-width: 540px) {
-  .notion-handoff-settings .setting-item { flex-direction: column; align-items: stretch; gap: 10px; }
+@container nh-settings (max-width: 420px) {
+  .notion-handoff-settings .setting-item { flex-direction: column; align-items: stretch; gap: 6px; }
   .notion-handoff-settings .setting-item-control { flex: auto; width: 100%; max-width: none; }
   .notion-handoff-settings .nh-profile-footer { flex-wrap: wrap; }
 }
 @media (max-width: 600px) {
   .notion-handoff-settings button { min-height: 42px; }
-  .notion-handoff-settings .setting-item { flex-direction: column; align-items: stretch; gap: 10px; }
+  .notion-handoff-settings .nh-connection-actions button { flex: 1; }
+  .notion-handoff-settings .setting-item { flex-direction: column; align-items: stretch; gap: 6px; }
   .notion-handoff-settings .setting-item-control { flex: auto; width: 100%; max-width: none; }
   .notion-handoff-settings .nh-profile-footer { flex-wrap: wrap; }
   .notion-handoff-push .nh-push-actions .setting-item-control { width: 100%; }
