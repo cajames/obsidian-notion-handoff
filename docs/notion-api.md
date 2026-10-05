@@ -18,6 +18,12 @@ Each bound note keeps its workspace name, actual workspace ID and page ID in fro
 
 New pages use a non-empty string `title` frontmatter property, otherwise the current filename without its extension. Existing pages receive content updates only; Push never updates page-title properties, and Pull never renames files or rewrites their local titles.
 
+## Pull backups
+
+Before a Pull changes Markdown or frontmatter, the original note is saved in `.obsidian/plugins/notion-handoff/backups/` (under the plugin directory if customized). New filenames start with a SHA-256 hash of the verified workspace/page binding, followed by a timestamp and random ID. The binding keeps a note’s backup history together across renames and token changes.
+
+After the note and sync state are saved successfully, only the latest **5 backups per linked note** are retained. The newly created backup is always kept, even if the device clock moves backward. Cancellation, unchanged Pulls and failed saves never prune backups. Cleanup failures report a warning without failing the saved Pull. Existing anonymous backups and unrelated files are left untouched.
+
 ## Setup and navigation
 
 **Test connection** reads `users.me` and, when configured, retrieves the parent page to confirm read access. Existing note associations for that workspace name must match the token’s workspace. Insert/update capabilities are configured in Notion; testing does not publish content.

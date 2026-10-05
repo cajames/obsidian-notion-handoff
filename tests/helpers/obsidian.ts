@@ -26,6 +26,13 @@ export function createTestApp(source = '---\nnotion_id: page-id\n---\nLocal body
     }),
     write: vi.fn(async (path: string, contents: string) => { files.set(path, contents); writes.push(path); }),
     mkdir: vi.fn(async (path: string) => { folders.add(path); }),
+    list: vi.fn(async (folder: string) => {
+      const directChild = (path: string) => path.startsWith(`${folder}/`) && !path.slice(folder.length + 1).includes('/');
+      return { files: [...files.keys(), ...binaries.keys()].filter(directChild), folders: [...folders].filter(directChild) };
+    }),
+    remove: vi.fn(async (path: string) => {
+      if (!files.delete(path) && !binaries.delete(path)) throw new Error('File missing');
+    }),
   };
   const app = {
     workspace: { getActiveFile: vi.fn(() => note) },

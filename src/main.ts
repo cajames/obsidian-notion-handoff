@@ -233,6 +233,32 @@ export default class NotionHandoff extends Plugin {
     else await this.app.vault.adapter.mkdir(path);
   }
 
+  private async backupNote(key: string, source: string) {
+    const folder = `${posix.dirname(this.statePath())}/backups`;
+    await this.ensureFolder(folder);
+    const path = `${folder}/${fingerprint(key)}-${Date.now()}-${randomId()}.md`;
+    await this.app.vault.adapter.write(path, source);
+    return path;
+  }
+
+  private async pruneBackups(latest: string) {
+    const folder = posix.dirname(latest);
+    const prefix = posix.basename(latest).slice(0, 64);
+    const pattern = new RegExp(`^${prefix}-(\\d+)-[a-f0-9]{32}\\.md$`);
+    const { files } = await this.app.vault.adapter.list(folder);
+    const backups = [...new Set(files)].filter((path) => {
+      if (posix.dirname(path) !== folder) return false;
+      const match = pattern.exec(posix.basename(path));
+      return match !== null && Number.isSafeInteger(Number(match[1]));
+    }).sort((left, right) => {
+      if (left === latest) return -1;
+      if (right === latest) return 1;
+      return Number(posix.basename(right).split('-')[1]) - Number(posix.basename(left).split('-')[1]) || left.localeCompare(right);
+    });
+    if (!backups.includes(latest)) throw new Error('Newest backup is missing; older backups were kept.');
+    for (const path of backups.slice(5).reverse()) await this.app.vault.adapter.remove(path);
+  }
+
   private async pullCurrentNote() {
     const file = this.activeNote();
     if (!file) return;
@@ -288,15 +314,12 @@ export default class NotionHandoff extends Plugin {
           return { bytes: new Uint8Array(response.arrayBuffer), mime: response.headers['content-type'] ?? response.headers['Content-Type'] ?? '' };
         },
       });
+      let latestBackup = '';
       const result = await applyPull(source, prepared.markdown, remote.fingerprint, checkpoint, prepared.bindings, prepared.files, {
         read: () => this.app.vault.read(file),
         prepareNote: (updated) => writeNotionBinding(updated, workspaceName, workspaceId, note.notionId!),
         review: (local, notion, merged, firstPull) => reviewPull(this.app, local, notion, merged, firstPull),
-        backup: async (original) => {
-          const folder = `${posix.dirname(this.statePath())}/backups`;
-          await this.ensureFolder(folder);
-          await this.app.vault.adapter.write(`${folder}/${Date.now()}-${randomId()}.md`, original);
-        },
+        backup: async (original) => { latestBackup = await this.backupNote(key, original); },
         writeFile: async (path, bytes) => {
           await this.ensureFolder(posix.dirname(path), true);
           // Never replace an existing vault attachment.
@@ -314,6 +337,10 @@ export default class NotionHandoff extends Plugin {
           await this.saveCheckpoint(key, next);
         },
       });
+      if (latestBackup && result.changed) {
+        try { await this.pruneBackups(latestBackup); }
+        catch (error) { new Notice(`Pull saved, but backup cleanup failed: ${error instanceof Error ? error.message : String(error)}`, 12000); }
+      }
       new Notice(result.cancelled ? 'Notion pull cancelled.' :
         result.changed ? `Pulled and merged ${file.basename}. Push remains separate.` : `${file.basename} is up to date; local edits kept.`);
     } catch (error) {
