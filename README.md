@@ -35,7 +35,7 @@ Run **Pull from Notion**. Independent edits merge automatically. For changes nee
 
 ## Installation
 
-BRAT installation will be available with the first public GitHub release.
+Install the [latest GitHub release](https://github.com/cajames/obsidian-notion-handoff/releases/latest) through BRAT.
 
 1. Install and enable [BRAT](https://github.com/TfTHacker/obsidian42-brat) through **Settings → Community plugins**.
 2. In BRAT settings, choose **Add a beta plugin** and enter `cajames/obsidian-notion-handoff`.
