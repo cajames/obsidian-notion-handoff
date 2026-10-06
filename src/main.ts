@@ -18,7 +18,8 @@ import { confirmPush, pickWorkspace, reviewPull } from './sync-modals';
 import { combineOrigins, makeOrigin, parseOrigins } from './media-origins';
 import HandoffSettings from './settings';
 import { uiStyles } from './ui-styles';
-import { notionPageUrl, parseNoteLinks, sameId, verifiedWorkspace } from './note-links';
+import { notionPageUrl, parseNoteLinks, readWorkspace, sameId, verifiedWorkspace } from './note-links';
+import { authorizationUrl, oauthChallenge, oauthRequest } from './oauth';
 
 const EMPTY_PROFILE = { name: 'Workspace 1', token: '', parentId: '' };
 
@@ -29,6 +30,10 @@ export default class NotionHandoff extends Plugin {
   private origins: Record<string, ReturnType<typeof makeOrigin>[]> = {};
   private syncReady = true;
   private noteLinks = parseNoteLinks('{}');
+  private oauthAttempt = {
+    profile: EMPTY_PROFILE, name: '', token: '', parentId: '',
+    state: '', verifier: '', expires: 0, busy: false,
+  };
 
   async onload() {
     const style = document.createElement('style');
@@ -52,7 +57,13 @@ export default class NotionHandoff extends Plugin {
       this.syncReady = false;
       new Notice(`Sync disabled: ${error instanceof Error ? error.message : String(error)}`, 12000);
     }
-    this.addSettingTab(new HandoffSettings(this));
+    const settingsTab = new HandoffSettings(this);
+    this.addSettingTab(settingsTab);
+    this.registerObsidianProtocolHandler('notion-handoff-oauth', (params) => {
+      void this.finishNotionConnection({ state: params.state ?? '', handoff: params.handoff ?? '', error: params.error ?? '' })
+        .then((connected) => { if (connected) settingsTab.display(); });
+    });
+    this.register(() => { this.oauthAttempt.state = ''; this.oauthAttempt.verifier = ''; });
     this.addCommand({
       id: 'push-to-notion',
       name: 'Push to Notion',
@@ -68,6 +79,75 @@ export default class NotionHandoff extends Plugin {
       name: 'Open in Notion',
       callback: () => { void this.openInNotion(); },
     });
+  }
+
+  async connectNotion(profile = this.settings.profiles[0]) {
+    if (!this.settings.profiles.includes(profile)) throw new Error('Workspace profile was removed.');
+    if (!profile.name.trim()) throw new Error('Give this workspace a name first.');
+    const state = randomId() + randomId();
+    const verifier = randomId() + randomId();
+    const attempt = {
+      profile, name: profile.name, token: profile.token, parentId: profile.parentId,
+      state, verifier, expires: Date.now() + 10 * 60 * 1000, busy: false,
+    };
+    this.oauthAttempt = attempt;
+    try {
+      const result = await oauthRequest('start', { state, challenge: oauthChallenge(verifier) });
+      if (!this.currentOAuthAttempt(attempt)) throw new Error('Workspace settings changed. Start a new connection.');
+      if (typeof result?.authorizeUrl !== 'string') throw new Error('Connection service returned no authorization URL.');
+      window.open(authorizationUrl(result.authorizeUrl, state), '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      if (this.oauthAttempt === attempt) { attempt.state = ''; attempt.verifier = ''; }
+      throw error;
+    }
+  }
+
+  private currentOAuthAttempt(attempt = this.oauthAttempt) {
+    return this.oauthAttempt === attempt && !!attempt.state && attempt.expires > Date.now() &&
+      this.settings.profiles.includes(attempt.profile) && attempt.profile.name === attempt.name &&
+      attempt.profile.token === attempt.token && attempt.profile.parentId === attempt.parentId;
+  }
+
+  private async finishNotionConnection(params = { state: '', handoff: '', error: '' }) {
+    const attempt = this.oauthAttempt;
+    if (!params.state || params.state !== attempt.state || attempt.busy) return false;
+    if (!this.currentOAuthAttempt(attempt)) {
+      attempt.state = ''; attempt.verifier = '';
+      new Notice('Notion connection expired or workspace settings changed. Connect again.');
+      return false;
+    }
+    attempt.busy = true;
+    try {
+      if (params.error) throw new Error(params.error === 'denied' ? 'Notion authorization cancelled.' : 'Notion authorization failed. Connect again.');
+      if (!/^[a-f0-9]{64}$/.test(params.handoff ?? '')) throw new Error('Invalid Notion handoff. Connect again.');
+      const token = await oauthRequest('redeem', { state: attempt.state, handoff: params.handoff, verifier: attempt.verifier });
+      if (typeof token?.access_token !== 'string' || !token.access_token.trim() ||
+        typeof token.workspace_id !== 'string' || !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.test(token.workspace_id)) {
+        throw new Error('Connection service returned an invalid token. Connect again.');
+      }
+      if (!this.currentOAuthAttempt(attempt)) throw new Error('Workspace settings changed. Connect again.');
+      const workspace = await readWorkspace(notionClient(token.access_token));
+      if (!this.currentOAuthAttempt(attempt)) throw new Error('Workspace settings changed. Connect again.');
+      if (!sameId(workspace.id, token.workspace_id)) throw new Error('Notion workspace identity does not match.');
+      const pinned = Reflect.get(attempt.profile, 'oauthWorkspaceId');
+      if (typeof pinned === 'string' && !sameId(pinned, workspace.id)) throw new Error('Choose the same Notion workspace, or add a separate profile.');
+      this.assertProfileWorkspace(attempt.name, workspace.id);
+      const connected = { ...attempt.profile, token: token.access_token, oauthWorkspaceId: workspace.id };
+      const settings = { ...this.settings, profiles: this.settings.profiles.map((profile) => profile === attempt.profile ? connected : profile) };
+      await this.saveData(settings);
+      if (!this.currentOAuthAttempt(attempt)) {
+        await this.saveData(this.settings);
+        throw new Error('Workspace settings changed. Connect again.');
+      }
+      Object.assign(attempt.profile, connected);
+      new Notice(`Connected to ${workspace.name ?? workspace.id}. Choose a parent page for new notes.`);
+      return true;
+    } catch (error) {
+      new Notice(`Connect to Notion: ${error instanceof Error ? error.message : 'Connection failed.'}`, 10000);
+      return false;
+    } finally {
+      attempt.state = ''; attempt.verifier = ''; attempt.busy = false;
+    }
   }
 
   assertProfileWorkspace(name: string, workspaceId: string) {

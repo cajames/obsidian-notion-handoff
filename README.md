@@ -53,4 +53,14 @@ Choose a workspace when prompted; your note saves the choice. A single workspace
 
 New pages use the note's `title` frontmatter property, or its filename. After creation, manage the page title in Notion.
 
-[Technical details](docs/notion-api.md)
+### Browser sign-in (unreleased)
+
+The source includes **Connect to Notion** for OAuth sign-in through `obsidian-notion-handoff.caj.ms`. The hosted service must be deployed before this works; the published **v0.1.0** release accepts existing tokens only. Users will not need to create their own integration once hosted sign-in is available.
+
+[OAuth deployment guide](docs/oauth-deployment.md) · [Technical details](docs/notion-api.md)
+
+## No warranty; limitation of liability
+
+Notion Handoff and its hosted services are provided **“AS IS” and “AS AVAILABLE”**, without warranty of any kind, express or implied, including warranties of merchantability, fitness for a particular purpose, and non-infringement. Use them at your own risk. You are responsible for maintaining independent backups and reviewing changes before syncing.
+
+**To the fullest extent permitted by applicable law**, the author, contributors, and service operators shall not be liable for any claims, damages, or other liability, including data loss, corruption, unintended disclosure, lost profits, or service interruption, whether in contract, tort, or otherwise, arising from the software or services, their use, or inability to use them, even if advised of the possibility of such damages. Nothing in this disclaimer excludes liability that cannot legally be excluded.

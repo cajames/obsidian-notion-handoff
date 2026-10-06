@@ -59,6 +59,7 @@ export default class HandoffSettings extends PluginSettingTab {
         card.querySelector('.nh-remove-profile')?.setAttribute('aria-label', `Remove ${name} profile`);
         card.querySelector('.nh-move-up')?.setAttribute('aria-label', `Move ${name} up`);
         card.querySelector('.nh-move-down')?.setAttribute('aria-label', `Move ${name} down`);
+        card.querySelector('.nh-connect-notion')?.setAttribute('aria-label', `Connect ${name} to Notion`);
         card.querySelector('.nh-test-connection')?.setAttribute('aria-label', `Test connection for ${name}`);
         card.querySelector('.nh-choose-parent')?.setAttribute('aria-label', `Choose parent page for ${name}`);
       };
@@ -72,6 +73,26 @@ export default class HandoffSettings extends PluginSettingTab {
             clearStatus();
             refreshName();
             await this.plugin.saveData(this.plugin.settings);
+          });
+        });
+      new Setting(fields).setName('Connect to Notion').setDesc('Authorize this workspace in your browser. Select the pages you want to share.')
+        .addButton((button) => {
+          button.setButtonText('Connect to Notion').setCta();
+          button.buttonEl.classList.add('nh-connect-notion');
+          button.onClick(async () => {
+            button.setDisabled(true);
+            status.setText('Starting Notion authorization…');
+            status.hidden = false;
+            try {
+              await this.plugin.connectNotion(profile);
+              if (!card.isConnected) return;
+              status.setText('Complete authorization in your browser, then choose Open Obsidian.');
+              status.dataset.state = 'success';
+            } catch (error) {
+              if (!card.isConnected) return;
+              status.setText(error instanceof Error ? error.message : 'Notion connection failed.');
+              status.dataset.state = 'error';
+            } finally { button.setDisabled(false); }
           });
         });
       new Setting(fields).setName('Notion access token').setDesc('Integration token or OAuth access token.')

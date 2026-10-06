@@ -71,6 +71,11 @@ export class Plugin {
   constructor(public app = createTestApp().app, public manifest = { id: 'notion-handoff', dir: '.obsidian/plugins/notion-handoff' }) {}
   addCommand(command: (typeof this.commands)[number]) { this.commands.push(command); }
   addSettingTab(_tab: unknown) {}
+  protocolHandlers = new Map();
+  registerObsidianProtocolHandler(action = '', handler = (_params = {}) => {}) {
+    this.protocolHandlers.set(action, handler);
+    this.register(() => this.protocolHandlers.delete(action));
+  }
   private disposers: (() => void)[] = [];
   register(callback: () => void) { this.disposers.push(callback); }
   unload() { for (const dispose of this.disposers.splice(0)) dispose(); }
