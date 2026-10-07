@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { notionLogo, obsidianLogo } from '../src/logos.js';
+import { fileURLToPath } from 'node:url';
 
 const origin = 'https://obsidian-notion-handoff.caj.ms';
 const workspace = '11111111-1111-1111-1111-111111111111';
@@ -38,10 +38,9 @@ const probe = `export class TestSession extends OAuthSession {
   }
 }`;
 const options = {
-  modules: [
-    { type: 'ESModule', path: 'index.js', contents: source + '\n' + probe },
-    { type: 'ESModule', path: 'logos.js', contents: readFileSync(new URL('../src/logos.js', import.meta.url), 'utf8') },
-  ],
+  modules: true,
+  script: source + '\n' + probe,
+  assets: { directory: fileURLToPath(new URL('../../assets/', import.meta.url)), binding: 'ASSETS', run_worker_first: true },
   compatibilityDate: '2026-03-01',
   durableObjects: { SESSIONS: { className: 'TestSession', useSQLite: true } },
   ratelimits: { AUTH_RATE_LIMIT: { namespace_id: '1001', simple: { limit: 1000, period: 60 } } },
@@ -59,7 +58,13 @@ const options = {
     return Response.json(response.token, { status: response.status });
   },
 };
-const mf = new Miniflare(convertV4MiniflareOptions(options));
+function createRuntime(settings) {
+  const converted = convertV4MiniflareOptions(settings);
+  // The v4 converter omits this v5 asset-routing flag.
+  converted.workers[0].config.assets.hasUserWorker = true;
+  return new Miniflare(converted);
+}
+const mf = createRuntime(options);
 
 before(() => mf.ready);
 after(async () => {
@@ -96,9 +101,30 @@ function notion(status = 200, token = { access_token: 'ntn_private', token_type:
 async function callback(state, suffix = 'code=test-code') {
   const response = await mf.dispatchFetch(`${origin}/notion/callback?state=${state}&${suffix}`);
   const html = await response.text();
-  const href = html.match(/href="([^"]+)"/)?.[1];
+  const href = html.match(/<a id="open-obsidian" href="([^"]+)"/)?.[1];
   return { response, html, link: href ? new URL(href.replaceAll('&amp;', '&')) : null };
 }
+
+test('project logos serve matching local assets without OAuth credentials; unrelated routes remain closed', async () => {
+  const unconfigured = createRuntime({ ...options, bindings: { AUTH_ORIGIN: origin } });
+  try {
+    for (const [filename, type] of [['logo.png', 'image/png'], ['logo.webp', 'image/webp']]) {
+      const response = await unconfigured.dispatchFetch(`${origin}/${filename}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('Content-Type'), type);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), readFileSync(new URL(`../../assets/${filename}`, import.meta.url)));
+      const head = await unconfigured.dispatchFetch(`${origin}/${filename}`, { method: 'HEAD' });
+      assert.equal(head.status, 200);
+      assert.equal((await head.arrayBuffer()).byteLength, 0);
+    }
+    assert.equal((await unconfigured.dispatchFetch(`${origin}/`)).status, 404);
+    assert.equal((await unconfigured.dispatchFetch(`${origin}/manifest.json`)).status, 404);
+    assert.equal((await unconfigured.dispatchFetch(`${origin}/logo.webp`, { method: 'POST' })).status, 404);
+    assert.equal((await unconfigured.dispatchFetch('https://evil.example/logo.webp')).status, 400);
+  } finally {
+    await unconfigured.dispose();
+  }
+});
 
 test('complete authorization: token never in browser, proof-bound single-use redemption', async () => {
   const { state, verifier } = await start();
@@ -162,9 +188,9 @@ test('callback page pins CDN integrity and limits scripts to fresh CSP nonces', 
   assert.equal([...html.matchAll(/<script nonce="([^"]+)"/g)].length, 3);
   for (const [, value] of html.matchAll(/<script nonce="([^"]+)"/g)) assert.equal(value, nonce);
   assert.ok(html.includes('<title>Obsidian Notion Handoff</title>'));
-  assert.ok(html.includes(obsidianLogo));
-  assert.ok(html.includes(notionLogo));
-  assert.equal(html.includes('<img'), false);
+  assert.ok(html.includes('<img src="/logo.webp" alt="Obsidian Notion Handoff logo" width="192" height="199"'));
+  assert.ok(html.includes('<link rel="icon" href="/logo.webp" type="image/webp">'));
+  assert.ok(csp.includes("img-src 'self'"));
   assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous" referrerpolicy="no-referrer"'));
   assert.ok(html.indexOf('history.replaceState') < html.indexOf('cdn.jsdelivr.net'));
   const next = await start();
@@ -266,10 +292,10 @@ test('bad Notion token responses cannot complete authorization', async () => {
 });
 
 test('service refuses missing credentials and enforces rate limits', async () => {
-  const unconfigured = new Miniflare(convertV4MiniflareOptions({ ...options, bindings: { AUTH_ORIGIN: origin } }));
-  const limited = new Miniflare(convertV4MiniflareOptions({
+  const unconfigured = createRuntime({ ...options, bindings: { AUTH_ORIGIN: origin } });
+  const limited = createRuntime({
     ...options, ratelimits: { AUTH_RATE_LIMIT: { namespace_id: '1002', simple: { limit: 1, period: 60 } } },
-  }));
+  });
   const request = () => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: randomHex(), challenge: randomHex() }) });
   try {
     assert.equal((await unconfigured.dispatchFetch(`${origin}/notion/start`, request())).status, 503);

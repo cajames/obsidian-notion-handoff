@@ -53,13 +53,15 @@ In **Workers & Pages → notion-handoff-auth → Settings**, confirm:
 
 - **Domains & Routes:** `obsidian-notion-handoff.caj.ms` is attached as a custom domain. Allow time for the HTTPS certificate to become active.
 - **Variables and Secrets:** `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` exist as secrets. You can also add or replace them here using the Secret type.
-- **Bindings:** `SESSIONS` is the Durable Object binding and `AUTH_RATE_LIMIT` is the rate-limit binding. Deployment creates these; do not create a separate KV database.
+- **Bindings:** `SESSIONS` is the Durable Object binding, `AUTH_RATE_LIMIT` is the rate-limit binding, and `ASSETS` serves the project logo. Deployment creates these; do not create a separate KV database.
 
-The service exposes `/notion/start`, `/notion/callback`, and `/notion/redeem`; the domain root intentionally returns 404. Test sign-in through the plugin rather than expecting a homepage.
+The service exposes `/notion/start`, `/notion/callback`, and `/notion/redeem`; the domain root intentionally returns 404. Project logos are public at `/logo.png` and `/logo.webp`. Test sign-in through the plugin rather than expecting a homepage.
 
 `worker/wrangler.jsonc` configures:
 
 - Custom domain `obsidian-notion-handoff.caj.ms`, with `workers.dev` disabled.
+- Same-origin logo assets from the repository's `assets/` directory. The Worker runs before asset serving and only allows GET/HEAD for the two logo paths. The callback page permits same-origin images through CSP; no third-party image host is used.
+- `manifest.json` references `assets/logo.png` in a custom `logo` metadata field. Obsidian does not support displaying plugin logos from the manifest.
 - An SQLite-backed Durable Object per authorization attempt. No KV namespace or external database is required.
 - A per-IP rate-limit binding: 20 requests per minute across start, callback, and redemption. Cloudflare rate limits are approximate and location-scoped, not a global spending cap.
 - Worker observability disabled to avoid recording callback URLs containing authorization codes.

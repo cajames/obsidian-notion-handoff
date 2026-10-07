@@ -1,5 +1,3 @@
-import { notionLogo, obsidianLogo } from './logos.js';
-
 const SESSION_MS = 10 * 60 * 1000;
 const HANDOFF_MS = 2 * 60 * 1000;
 const HEX = /^[a-f0-9]{64}$/;
@@ -22,7 +20,7 @@ function page(state, handoff = '', error = '') {
   if (handoff) link.searchParams.set('handoff', handoff);
   if (error) link.searchParams.set('error', error);
   const nonce = randomHex();
-  const csp = `${headers['Content-Security-Policy']}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'`;
+  const csp = `${headers['Content-Security-Policy']}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'self'`;
   // Only locally generated hex values and fixed error strings enter this page.
   const message = error ? 'Return to Obsidian and start a new connection.' :
     'Notion has authorized access. Return to Obsidian to save your connection.';
@@ -32,6 +30,7 @@ function page(state, handoff = '', error = '') {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Obsidian Notion Handoff</title>
+  <link rel="icon" href="/logo.webp" type="image/webp">
   <script nonce="${nonce}">history.replaceState(null, '', location.pathname);</script>
   <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f7f5;color:#37352f}main{max-width:30rem;margin:auto}</style>
@@ -39,13 +38,7 @@ function page(state, handoff = '', error = '') {
 <body class="flex min-h-screen items-center justify-center px-5 py-12 antialiased">
   <main class="w-full">
     <section aria-labelledby="page-title" class="rounded-xl border border-stone-200 bg-white p-7 shadow-sm sm:p-10">
-      <div aria-hidden="true" class="mb-8 flex items-center gap-3 text-stone-400">
-        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200 text-stone-700">
-          ${obsidianLogo}
-        </span>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg>
-        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200">${notionLogo}</span>
-      </div>
+      <img src="/logo.webp" alt="Obsidian Notion Handoff logo" width="192" height="199" class="mb-8 h-auto w-20">
       <p class="mb-3 text-xs font-medium tracking-wide text-stone-500">${error ? 'Connection not completed' : 'Authorization complete'}</p>
       <h1 id="page-title" class="text-3xl font-semibold tracking-tight text-stone-800">Obsidian Notion Handoff</h1>
       <p class="mt-4 text-sm leading-6 text-stone-600">${message}</p>
@@ -122,6 +115,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.origin !== env.AUTH_ORIGIN) return json({ error: 'Unknown host.' }, 400);
+    if ((request.method === 'GET' || request.method === 'HEAD') && ['/logo.png', '/logo.webp'].includes(url.pathname)) {
+      return env.ASSETS.fetch(request);
+    }
     const start = url.pathname === '/notion/start' && request.method === 'POST';
     const redeem = url.pathname === '/notion/redeem' && request.method === 'POST';
     const callback = url.pathname === '/notion/callback' && request.method === 'GET';

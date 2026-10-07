@@ -5,6 +5,11 @@
   "compatibility_date": "2026-03-01",
   "workers_dev": false,
   "routes": [{ "pattern": "obsidian-notion-handoff.caj.ms", "custom_domain": true }],
+  "assets": {
+    "directory": "../assets",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
   "vars": { "AUTH_ORIGIN": "https://obsidian-notion-handoff.caj.ms" },
   "durable_objects": {
     "bindings": [{ "name": "SESSIONS", "class_name": "OAuthSession" }]

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Obsidian Notion Handoff logo" width="160">
+</p>
+
 # Obsidian Notion Handoff
 
 **Publish polished notes to your work or clients' Notion workspaces.**
