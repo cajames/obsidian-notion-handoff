@@ -9,6 +9,7 @@ const workspace = '11111111-1111-1111-1111-111111111111';
 const randomHex = () => randomBytes(32).toString('hex');
 const challenge = (value) => createHash('sha256').update(value).digest('hex');
 const notionResponses = [];
+const notionRequests = [];
 const source = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
 // A test-only subclass exposes storage/alarm checks; never bundled or deployed.
 const probe = `export class TestSession extends OAuthSession {
@@ -17,6 +18,15 @@ const probe = `export class TestSession extends OAuthSession {
       const saved = await this.ctx.storage.get('session');
       await this.ctx.storage.put('session', { ...saved, expires: Date.now() - 1 });
       return new Response('ok');
+    }
+    if (new URL(request.url).pathname === '/_test/short-expiry') {
+      const saved = await this.ctx.storage.get('session');
+      const expires = Date.now() + 1000;
+      await this.ctx.storage.put('session', { ...saved, expires });
+      return Response.json({ expires });
+    }
+    if (new URL(request.url).pathname === '/_test/storage') {
+      return Response.json(await this.ctx.storage.get('session') ?? null);
     }
     if (new URL(request.url).pathname === '/_test/alarm') {
       await this.alarm();
@@ -33,6 +43,7 @@ const options = {
   ratelimits: { AUTH_RATE_LIMIT: { namespace_id: '1001', simple: { limit: 1000, period: 60 } } },
   bindings: { AUTH_ORIGIN: origin, NOTION_CLIENT_ID: 'test-client', NOTION_CLIENT_SECRET: 'server-secret' },
   outboundService: async (request) => {
+    notionRequests.push(request.url);
     assert.equal(request.url, 'https://api.notion.com/v1/oauth/token');
     assert.equal(request.headers.get('Authorization'), `Basic ${Buffer.from('test-client:server-secret').toString('base64')}`);
     const data = await request.json();
@@ -40,6 +51,7 @@ const options = {
     assert.equal(data.redirect_uri, `${origin}/notion/callback`);
     const response = notionResponses.shift();
     assert.ok(response, 'Unexpected Notion request (no replay allowed)');
+    if (response.respond) return response.respond(request);
     return Response.json(response.token, { status: response.status });
   },
 };
@@ -48,6 +60,7 @@ const mf = new Miniflare(convertV4MiniflareOptions(options));
 before(() => mf.ready);
 after(async () => {
   assert.equal(notionResponses.length, 0, 'All expected Notion requests must have been made');
+  assert.ok(notionRequests.every((url) => url === 'https://api.notion.com/v1/oauth/token'), 'Token exchange must never follow upstream redirects');
   await mf.dispose();
 });
 
@@ -177,4 +190,114 @@ test('session expiry rejects callbacks, alarms clear temporary storage', async (
   assert.equal((await callback(state)).response.status, 410);
   const cleared = await session.fetch('https://test/_test/alarm');
   assert.equal(await cleared.json(), null);
+});
+
+async function sessionFor(state) {
+  const namespace = (await mf.getBindings()).SESSIONS;
+  return namespace.get(namespace.idFromName(state));
+}
+
+function delayedNotion() {
+  const entered = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  notion();
+  const response = notionResponses.pop();
+  notionResponses.push({ respond: async () => {
+    entered.resolve();
+    await released.promise;
+    return Response.json(response.token, { status: response.status });
+  } });
+  return { entered: entered.promise, release: released.resolve };
+}
+
+test('concurrent starts cannot replace the winning proof binding', async () => {
+  const state = randomHex();
+  const challenges = [randomHex(), randomHex()];
+  const results = await Promise.all(challenges.map((value) => post('start', { state, challenge: value })));
+  assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
+  const session = await sessionFor(state);
+  const saved = await (await session.fetch('https://test/_test/storage')).json();
+  assert.equal(saved.challenge, challenges[results.findIndex((result) => result.status === 200)]);
+});
+
+test('concurrent callbacks exchange once; redemption removes stored token and unnecessary data is never retained', { timeout: 5000 }, async () => {
+  const { state, verifier } = await start();
+  const requestsBefore = notionRequests.length;
+  const delayed = delayedNotion();
+  const first = callback(state);
+  try {
+    await delayed.entered;
+    assert.equal((await callback(state)).response.status, 410);
+  } finally {
+    delayed.release();
+  }
+  const { response, html, link } = await first;
+  assert.equal(response.status, 200);
+  assert.equal(notionRequests.length - requestsBefore, 1);
+  assert.equal(html.includes('ntn_private'), false);
+  const session = await sessionFor(state);
+  const saved = await (await session.fetch('https://test/_test/storage')).json();
+  assert.equal(saved.phase, 'ready');
+  assert.deepEqual(saved.token, { access_token: 'ntn_private', workspace_id: workspace, workspace_name: 'Client' });
+  assert.equal(JSON.stringify(saved).includes('nrt_private'), false);
+  assert.equal(JSON.stringify(saved).includes('private@example.com'), false);
+  assert.equal((await post('redeem', { state, verifier, handoff: link.searchParams.get('handoff') })).status, 200);
+  const consumed = await (await session.fetch('https://test/_test/storage')).json();
+  assert.deepEqual(consumed, { state, phase: 'consumed', expires: saved.expires });
+});
+
+test('duplicate callback codes are rejected without consuming the pending session', async () => {
+  const { state } = await start();
+  const requestsBefore = notionRequests.length;
+  assert.equal((await callback(state, 'code=one&code=two')).response.status, 400);
+  assert.equal(notionRequests.length, requestsBefore);
+  notion();
+  assert.equal((await callback(state)).response.status, 200);
+  assert.equal(notionRequests.length - requestsBefore, 1);
+});
+
+test('network failure consumes callback without exposing upstream messages or allowing replay', async () => {
+  const { state } = await start();
+  const requestsBefore = notionRequests.length;
+  notionResponses.push({ respond: () => { throw new Error('server-secret sensitive-upstream-message'); } });
+  const { html, link } = await callback(state);
+  assert.equal(link.searchParams.get('error'), 'failed');
+  assert.equal(html.includes('server-secret'), false);
+  assert.equal(html.includes('sensitive-upstream-message'), false);
+  assert.equal((await callback(state)).response.status, 410);
+  assert.equal(notionRequests.length - requestsBefore, 1);
+});
+
+test('upstream redirects are not followed and cannot complete authorization', async () => {
+  const { state } = await start();
+  const requestsBefore = notionRequests.length;
+  notionResponses.push({ respond: () => new Response(null, {
+    status: 302, headers: { Location: 'https://attacker.invalid/token' },
+  }) });
+  const { link } = await callback(state);
+  assert.equal(link.searchParams.get('error'), 'failed');
+  assert.equal((await callback(state)).response.status, 410);
+  assert.equal(notionRequests.length - requestsBefore, 1);
+});
+
+test('expiration during token exchange cannot retain or deliver the token', { timeout: 5000 }, async () => {
+  const { state } = await start();
+  const session = await sessionFor(state);
+  const { expires } = await (await session.fetch('https://test/_test/short-expiry')).json();
+  const delayed = delayedNotion();
+  const pending = callback(state);
+  try {
+    await delayed.entered;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, expires - Date.now()) + 25));
+  } finally {
+    delayed.release();
+  }
+  const { html, link } = await pending;
+  assert.equal(link.searchParams.get('error'), 'failed');
+  assert.equal(html.includes('ntn_private'), false);
+  const saved = await (await session.fetch('https://test/_test/storage')).json();
+  assert.equal(saved.phase, 'failed');
+  assert.equal(JSON.stringify(saved).includes('ntn_private'), false);
+  assert.equal((await session.fetch('https://test/_test/alarm')).status, 200);
+  assert.equal(await (await session.fetch('https://test/_test/storage')).json(), null);
 });
