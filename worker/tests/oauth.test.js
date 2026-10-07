@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
+import { notionLogo, obsidianLogo } from '../src/logos.js';
 
 const origin = 'https://obsidian-notion-handoff.caj.ms';
 const workspace = '11111111-1111-1111-1111-111111111111';
@@ -37,8 +38,10 @@ const probe = `export class TestSession extends OAuthSession {
   }
 }`;
 const options = {
-  modules: true,
-  script: source + '\n' + probe,
+  modules: [
+    { type: 'ESModule', path: 'index.js', contents: source + '\n' + probe },
+    { type: 'ESModule', path: 'logos.js', contents: readFileSync(new URL('../src/logos.js', import.meta.url), 'utf8') },
+  ],
   compatibilityDate: '2026-03-01',
   durableObjects: { SESSIONS: { className: 'TestSession', useSQLite: true } },
   ratelimits: { AUTH_RATE_LIMIT: { namespace_id: '1001', simple: { limit: 1000, period: 60 } } },
@@ -159,6 +162,9 @@ test('callback page pins CDN integrity and limits scripts to fresh CSP nonces', 
   assert.equal([...html.matchAll(/<script nonce="([^"]+)"/g)].length, 3);
   for (const [, value] of html.matchAll(/<script nonce="([^"]+)"/g)) assert.equal(value, nonce);
   assert.ok(html.includes('<title>Obsidian Notion Handoff</title>'));
+  assert.ok(html.includes(obsidianLogo));
+  assert.ok(html.includes(notionLogo));
+  assert.equal(html.includes('<img'), false);
   assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous" referrerpolicy="no-referrer"'));
   assert.ok(html.indexOf('history.replaceState') < html.indexOf('cdn.jsdelivr.net'));
   const next = await start();

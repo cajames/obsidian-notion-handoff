@@ -1,3 +1,5 @@
+import { notionLogo, obsidianLogo } from './logos.js';
+
 const SESSION_MS = 10 * 60 * 1000;
 const HANDOFF_MS = 2 * 60 * 1000;
 const HEX = /^[a-f0-9]{64}$/;
@@ -39,10 +41,10 @@ function page(state, handoff = '', error = '') {
     <section aria-labelledby="page-title" class="rounded-xl border border-stone-200 bg-white p-7 shadow-sm sm:p-10">
       <div aria-hidden="true" class="mb-8 flex items-center gap-3 text-stone-400">
         <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200 text-stone-700">
-          <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M9 12h6M9 16h4"/></svg>
+          ${obsidianLogo}
         </span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg>
-        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200 font-serif text-2xl font-bold text-stone-800">N</span>
+        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200">${notionLogo}</span>
       </div>
       <p class="mb-3 text-xs font-medium tracking-wide text-stone-500">${error ? 'Connection not completed' : 'Authorization complete'}</p>
       <h1 id="page-title" class="text-3xl font-semibold tracking-tight text-stone-800">Obsidian Notion Handoff</h1>
