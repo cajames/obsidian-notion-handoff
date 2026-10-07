@@ -19,11 +19,68 @@ function page(state, handoff = '', error = '') {
   link.searchParams.set('state', state);
   if (handoff) link.searchParams.set('handoff', handoff);
   if (error) link.searchParams.set('error', error);
+  const nonce = randomHex();
+  const csp = `${headers['Content-Security-Policy']}; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'`;
   // Only locally generated hex values and fixed error strings enter this page.
-  const message = error ? 'Notion connection was not completed. Return to Obsidian and try again.' :
-    'Authorization complete. Open Obsidian within two minutes to save your connection.';
-  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Notion Handoff</title><h1>Notion Handoff</h1><p>${message}</p><p><a href="${link.href.replaceAll('&', '&amp;')}">Open Obsidian</a></p><p>Use the same device and vault where you started connecting.</p></html>`, {
-    headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' },
+  const message = error ? 'Return to Obsidian and start a new connection.' :
+    'Notion has authorized access. Return to Obsidian to save your connection.';
+  return new Response(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Obsidian Notion Handoff</title>
+  <script nonce="${nonce}">history.replaceState(null, '', location.pathname);</script>
+  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+  <style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f7f5;color:#37352f}main{max-width:30rem;margin:auto}</style>
+</head>
+<body class="flex min-h-screen items-center justify-center px-5 py-12 antialiased">
+  <main class="w-full">
+    <section aria-labelledby="page-title" class="rounded-xl border border-stone-200 bg-white p-7 shadow-sm sm:p-10">
+      <div aria-hidden="true" class="mb-8 flex items-center gap-3 text-stone-400">
+        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200 text-stone-700">
+          <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M9 12h6M9 16h4"/></svg>
+        </span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg>
+        <span class="flex size-11 items-center justify-center rounded-lg border border-stone-200 font-serif text-2xl font-bold text-stone-800">N</span>
+      </div>
+      <p class="mb-3 text-xs font-medium tracking-wide text-stone-500">${error ? 'Connection not completed' : 'Authorization complete'}</p>
+      <h1 id="page-title" class="text-3xl font-semibold tracking-tight text-stone-800">Obsidian Notion Handoff</h1>
+      <p class="mt-4 text-sm leading-6 text-stone-600">${message}</p>
+      ${error ? '' : '<p id="opening-status" role="status" aria-live="polite" class="mt-6 text-sm text-stone-500">Opening Obsidian in 3 seconds…</p>'}
+      <a id="open-obsidian" href="${link.href.replaceAll('&', '&amp;')}" class="mt-6 flex w-full items-center justify-center gap-2 rounded-md bg-stone-800 px-4 py-3 text-sm font-medium text-white no-underline transition-colors hover:bg-stone-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-stone-800 motion-reduce:transition-none">
+        Open Obsidian
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg>
+      </a>
+      <div class="mt-8 border-t border-stone-100 pt-5 text-xs leading-5 text-stone-500">
+        <p>Use the same device and vault where you started connecting.</p>
+        ${error ? '' : '<p class="mt-2">Open within two minutes. If your browser asks, allow it to open Obsidian.</p>'}
+      </div>
+    </section>
+    <p class="mt-5 text-center text-xs leading-5 text-stone-500">${error ? 'You can close this tab and try again in Obsidian.' : 'You can close this tab after saving your connection in Obsidian.'}</p>
+  </main>
+  ${error ? '' : `<script nonce="${nonce}">
+    const button = document.getElementById('open-obsidian');
+    const status = document.getElementById('opening-status');
+    let seconds = 3;
+    const finish = () => {
+      clearInterval(timer);
+      status.textContent = 'If Obsidian didn’t open, use Open Obsidian below.';
+    };
+    const timer = setInterval(() => {
+      seconds -= 1;
+      if (seconds > 0) {
+        status.textContent = 'Opening Obsidian in ' + seconds + (seconds === 1 ? ' second…' : ' seconds…');
+        return;
+      }
+      finish();
+      window.location.assign(button.href);
+    }, 1000);
+    button.addEventListener('click', finish);
+  </script>`}
+</body>
+</html>`, {
+    headers: { ...headers, 'Content-Security-Policy': csp, 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
 

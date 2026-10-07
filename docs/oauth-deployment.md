@@ -70,7 +70,7 @@ Set Cloudflare usage/billing alerts and review abuse protection before broad dis
 
 1. Add or expand a workspace in Notion Handoff settings, give it a name, and click **Connect to Notion**.
 2. In the browser, choose the workspace and grant access to the relevant pages, including a parent page for new notes.
-3. On the callback page, click **Open Obsidian** on the same device and in the same vault that started sign-in.
+3. The callback page tries to open Obsidian after a three-second countdown. If the browser blocks it, click **Open Obsidian**. Use the same device and vault that started sign-in.
 4. The plugin verifies the token's workspace, saves the connection, and prompts you to **Choose parent page**.
 
 Use a separate profile for each workspace. Existing bound notes and OAuth workspace pins prevent reauthorizing a profile into a different workspace. Names and parent-page settings are preserved; ensure an existing parent page is accessible to the newly authorized integration.
@@ -83,7 +83,7 @@ The Worker alone holds the shared Notion client secret and exchanges authorizati
 
 The plugin keeps a random verifier in memory and sends only its SHA-256 challenge during initiation. The browser receives a separate random, single-use handoff code, never an access token. Redemption requires both that code and the verifier from the originating plugin instance. This proof binding is for our handoff; it is not a claim that Notion supports native PKCE.
 
-Callback claims and redemption are atomic. Concurrent callbacks cannot exchange the same session twice; concurrent redemptions cannot both retrieve its token. Failed exchanges are not retried automatically. Callback pages send no-store, no-referrer and restrictive content-security headers and load no third-party resources.
+Callback claims and redemption are atomic. Concurrent callbacks cannot exchange the same session twice; concurrent redemptions cannot both retrieve its token. Failed exchanges are not retried automatically. Callback pages send no-store, no-referrer and restrictive content-security headers. Inline scripts use per-response CSP nonces; Tailwind's browser compiler loads from jsDelivr at a pinned version with subresource integrity verification. OAuth query parameters are removed from the address bar before the CDN script loads, and no referrer is sent. The CDN still receives network metadata such as IP addresses. Like any page script, the compiler can read the handoff link; redemption still requires the originating plugin's verifier. No access token is rendered in the page. Include jsDelivr in the service's privacy disclosures.
 
 The Worker temporarily stores an access token, workspace ID and workspace name only until redemption or the handoff deadline. Redemption removes the token immediately; Durable Object alarms clean up expired sessions. Notion owner/email data and refresh tokens are not retained. Refresh-token rotation is not implemented; use **Connect to Notion** again when reauthorization is needed.
 

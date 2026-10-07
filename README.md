@@ -1,4 +1,4 @@
-# Notion Handoff
+# Obsidian Notion Handoff
 
 **Publish polished notes to your work or clients' Notion workspaces.**
 

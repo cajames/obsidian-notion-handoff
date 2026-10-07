@@ -2,6 +2,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
 const origin = 'https://obsidian-notion-handoff.caj.ms';
@@ -121,6 +122,95 @@ test('complete authorization: token never in browser, proof-bound single-use red
   });
   assert.equal((await callback(state)).response.status, 410);
   assert.equal((await post('start', { state, challenge: challenge(verifier) })).status, 409);
+});
+
+function callbackBrowser(html, link) {
+  const navigations = [];
+  const historyChanges = [];
+  const status = { textContent: html.match(/id="opening-status"[^>]*>([^<]*)</)?.[1] };
+  let tick;
+  let click;
+  let stopped = false;
+  const button = { href: link.href, addEventListener: (event, handler) => { assert.equal(event, 'click'); click = handler; } };
+  const browser = {
+    document: { getElementById: (id) => id === 'open-obsidian' ? button : status },
+    history: { replaceState: (...args) => historyChanges.push(args) },
+    location: { pathname: '/notion/callback', assign: (href) => navigations.push(href) },
+    setInterval: (handler, delay) => { assert.equal(delay, 1000); tick = handler; return 1; },
+    clearInterval: (id) => { assert.equal(id, 1); stopped = true; },
+  };
+  browser.window = browser;
+  for (const [, script] of html.matchAll(/<script nonce="[^"]+"[^>]*>([\s\S]*?)<\/script>/g)) {
+    // Execute only the served inline scripts; never fetch third-party code in tests.
+    runInNewContext(script, browser);
+  }
+  return { navigations, historyChanges, status, tick: () => { if (!stopped) tick?.(); }, click: () => click?.() };
+}
+
+test('callback page pins CDN integrity and limits scripts to fresh CSP nonces', async () => {
+  const { state } = await start();
+  notion();
+  const { response, html } = await callback(state);
+  const csp = response.headers.get('Content-Security-Policy');
+  const nonce = csp.match(/script-src 'nonce-([a-f0-9]{64})'/)?.[1];
+  assert.ok(nonce);
+  assert.equal(csp.includes('unsafe-eval'), false);
+  assert.equal(csp.includes("script-src 'unsafe-inline'"), false);
+  assert.equal([...html.matchAll(/<script nonce="([^"]+)"/g)].length, 3);
+  for (const [, value] of html.matchAll(/<script nonce="([^"]+)"/g)) assert.equal(value, nonce);
+  assert.ok(html.includes('<title>Obsidian Notion Handoff</title>'));
+  assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous" referrerpolicy="no-referrer"'));
+  assert.ok(html.indexOf('history.replaceState') < html.indexOf('cdn.jsdelivr.net'));
+  const next = await start();
+  const denied = await callback(next.state, 'error=access_denied');
+  assert.notEqual(denied.response.headers.get('Content-Security-Policy'), csp);
+});
+
+test('successful callback counts down and tries to open Obsidian once after three seconds', async () => {
+  const { state } = await start();
+  notion();
+  const { html, link } = await callback(state);
+  const browser = callbackBrowser(html, link);
+  assert.deepEqual(browser.historyChanges, [[null, '', '/notion/callback']]);
+  assert.equal(browser.status.textContent, 'Opening Obsidian in 3 seconds…');
+  assert.deepEqual(browser.navigations, []);
+  browser.tick();
+  assert.equal(browser.status.textContent, 'Opening Obsidian in 2 seconds…');
+  browser.tick();
+  assert.equal(browser.status.textContent, 'Opening Obsidian in 1 second…');
+  browser.tick();
+  assert.deepEqual(browser.navigations, [link.href]);
+  assert.ok(browser.status.textContent.includes('use Open Obsidian below'));
+  browser.tick();
+  assert.deepEqual(browser.navigations, [link.href]);
+});
+
+test('manual Open Obsidian cancels the pending automatic attempt', async () => {
+  const { state } = await start();
+  notion();
+  const { html, link } = await callback(state);
+  const browser = callbackBrowser(html, link);
+  browser.tick();
+  browser.click();
+  browser.tick();
+  browser.tick();
+  assert.deepEqual(browser.navigations, []);
+  assert.ok(browser.status.textContent.includes('use Open Obsidian below'));
+  assert.equal(link.protocol, 'obsidian:');
+});
+
+test('failed and denied callbacks retain a manual return link without automatic navigation', async () => {
+  for (const suffix of ['error=access_denied', 'code=']) {
+    const { state } = await start();
+    const { html, link } = await callback(state, suffix);
+    assert.equal(html.includes('id="opening-status"'), false);
+    const browser = callbackBrowser(html, link);
+    browser.tick();
+    assert.deepEqual(browser.navigations, []);
+    assert.deepEqual(browser.historyChanges, [[null, '', '/notion/callback']]);
+    assert.equal(link.protocol, 'obsidian:');
+    assert.ok(link.searchParams.get('error'));
+  }
 });
 
 test('denial consumes callback without exchanging a code or disclosing upstream error text', async () => {
