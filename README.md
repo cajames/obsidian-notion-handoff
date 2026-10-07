@@ -49,17 +49,18 @@ BRAT handles installation and updates. Desktop and experimental mobile support a
 
 ## Notion setup
 
-1. [Create a Notion integration](https://www.notion.so/profile/integrations) with read, update, and insert content capabilities. Give it access to your target pages and a parent page for new notes.
-2. In Notion Handoff settings, add a workspace name and **Notion access token**. Use an integration token or OAuth access token. Add a connection for each workspace you use.
-3. Click **Test connection** to confirm the workspace, then **Choose parent page** to find the page for new notes by title.
+1. In Notion Handoff settings, name a workspace and click **Connect to Notion**.
+2. In your browser, choose the Notion workspace and grant access to your target pages, including a parent page for new notes. No personal integration or token is needed.
+3. The callback page tries to open Obsidian after three seconds. Click **Open Obsidian** if your browser blocks it; use the same device and vault that started sign-in.
+4. Click **Choose parent page** to find the page for new notes by title. Add a separate connection for each workspace.
 
 Choose a workspace when prompted; your note saves the choice. A single workspace is selected automatically.
 
 New pages use the note's `title` frontmatter property, or its filename. After creation, manage the page title in Notion.
 
-### Browser sign-in (unreleased)
+### Manual access tokens (optional)
 
-The source includes **Connect to Notion** for OAuth sign-in through `obsidian-notion-handoff.caj.ms`. The hosted service must be deployed before this works; the published **v0.1.0** release accepts existing tokens only. Users will not need to create their own integration once hosted sign-in is available.
+Manual tokens remain supported. [Create a Notion integration](https://www.notion.so/profile/integrations) with read, update, and insert content capabilities, grant access to your target pages, and paste its token into **Notion access token** in the workspace settings. Click **Test connection**, then **Choose parent page**.
 
 [OAuth deployment guide](docs/oauth-deployment.md) · [Technical details](docs/notion-api.md)
 

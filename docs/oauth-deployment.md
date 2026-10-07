@@ -1,6 +1,6 @@
 # Hosted Notion OAuth
 
-The source includes **Connect to Notion** and a Cloudflare Worker shared by all users. These changes are not in the published v0.1.0 release. The service must be configured and deployed before browser sign-in works; manual access tokens remain supported.
+Version **v0.2.0** includes **Connect to Notion** and a Cloudflare Worker shared by all users. The service must be configured and deployed before browser sign-in works; manual access tokens remain supported.
 
 ## Notion integration
 
