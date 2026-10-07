@@ -10,6 +10,8 @@ const workspaceId = '11111111-1111-4111-8111-111111111111';
 const handoff = 'a'.repeat(64);
 let state = '';
 const redeem = vi.fn(async () => ({ access_token: 'ntn_oauth', workspace_id: workspaceId, workspace_name: 'Client Notion' }));
+const copyLink = vi.fn(async (_url = '') => {});
+const unloadPlugins = [() => {}];
 
 async function setup(boundWorkspaceId = '') {
   const store = createTestApp();
@@ -18,9 +20,17 @@ async function setup(boundWorkspaceId = '') {
   }));
   const plugin = new NotionHandoff(store.app as never, { id: 'notion-handoff', name: 'Notion Handoff', version: '0.1.0', minAppVersion: '1.5.0', author: 'Test', description: 'Test' });
   await plugin.onload();
+  unloadPlugins.push(() => plugin.unload());
   const profile = plugin.settings.profiles[0];
   const callback = Reflect.get(plugin, 'protocolHandlers').get('notion-handoff-oauth');
-  return { ...store, plugin, profile, callback, saved: vi.mocked(plugin.saveData) };
+  const showSettings = () => {
+    const tab = new HandoffSettings(plugin);
+    document.body.append(tab.containerEl);
+    tab.display();
+    const button = (name = '') => Array.from(tab.containerEl.querySelectorAll('button')).find((button) => button.textContent === name)!;
+    return { tab, button };
+  };
+  return { ...store, plugin, profile, callback, showSettings, saved: vi.mocked(plugin.saveData) };
 }
 
 beforeEach(() => {
@@ -30,6 +40,8 @@ beforeEach(() => {
   state = '';
   redeem.mockReset().mockResolvedValue({ access_token: 'ntn_oauth', workspace_id: workspaceId, workspace_name: 'Client Notion' });
   vi.spyOn(window, 'open').mockReturnValue(null);
+  copyLink.mockReset().mockResolvedValue(undefined);
+  vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(copyLink);
   vi.mocked(requestUrl).mockImplementation(async (input) => {
     const request = Object(input);
     if (request.url === `${AUTH_ORIGIN}/notion/start`) {
@@ -47,6 +59,8 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  for (const unload of unloadPlugins.splice(0)) unload();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   document.head.querySelectorAll('style[data-notion-handoff]').forEach((style) => style.remove());
   document.body.replaceChildren();
@@ -182,6 +196,130 @@ describe('Notion OAuth connection', () => {
     expect(redeem).toHaveBeenCalledTimes(1);
   });
 
+  it('shows Copy link only after Connect and copies the same authorization without new requests or persistence', async () => {
+    vi.useFakeTimers();
+    const store = await setup();
+    const { tab, button } = store.showSettings();
+    const copy = button('Copy link');
+    expect(copy.hidden).toBe(true);
+    expect(copy.parentElement).toBe(button('Connect to Notion').parentElement);
+    button('Connect to Notion').click();
+    await vi.waitFor(() => expect(copy.hidden).toBe(false));
+    const url = vi.mocked(window.open).mock.calls[0][0];
+    expect(store.plugin.notionConnectionUrl(store.profile)).toBe(url);
+    expect(copy.getAttribute('aria-label')).toBe('Copy Notion authorization link for Default');
+    copy.click();
+    await vi.waitFor(() => expect(copy.textContent).toBe('Copied'));
+    expect(copyLink).toHaveBeenCalledExactlyOnceWith(url);
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+    expect(window.open).toHaveBeenCalledTimes(1);
+    expect(store.saved).not.toHaveBeenCalled();
+    expect(store.writes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(copy.textContent).toBe('Copy link');
+    tab.display();
+    expect(button('Copy link').hidden).toBe(false);
+  });
+
+  it('hides Copy link on expiry without another browser or network request', async () => {
+    vi.useFakeTimers();
+    const store = await setup();
+    const { button } = store.showSettings();
+    await store.plugin.connectNotion(store.profile);
+    const copy = button('Copy link');
+    expect(copy.hidden).toBe(false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(copy.hidden).toBe(true);
+    expect(store.plugin.notionConnectionUrl(store.profile)).toBe('');
+    expect(Reflect.get(store.plugin, 'oauthAttempt').authorizeUrl).toBe('');
+    copy.click();
+    expect(copyLink).not.toHaveBeenCalled();
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['Workspace name', 'Notion access token', 'Parent page ID'])('hides Copy link when %s changes', async (label) => {
+    const store = await setup();
+    const { tab, button } = store.showSettings();
+    await store.plugin.connectNotion(store.profile);
+    const copy = button('Copy link');
+    const input = Array.from(tab.containerEl.querySelectorAll('input')).find((input) => input.getAttribute('aria-label') === label)!;
+    input.value = 'changed';
+    input.dispatchEvent(new Event('input'));
+    expect(copy.hidden).toBe(true);
+    expect(store.plugin.notionConnectionUrl(store.profile)).toBe('');
+    copy.click();
+    expect(copyLink).not.toHaveBeenCalled();
+  });
+
+  it('replaces the copied link on reconnect and only shows it for the originating profile', async () => {
+    const store = await setup();
+    const other = { name: 'Other', token: '', parentId: '' };
+    store.plugin.settings.profiles.push(other);
+    const { tab } = store.showSettings();
+    const copies = Array.from(tab.containerEl.querySelectorAll('button')).filter((button) => button.textContent === 'Copy link');
+    await store.plugin.connectNotion(store.profile);
+    expect(copies.map((button) => button.hidden)).toEqual([false, true]);
+    const oldUrl = store.plugin.notionConnectionUrl(store.profile);
+    await store.plugin.connectNotion(store.profile);
+    copies[0].click();
+    await vi.waitFor(() => expect(copyLink).toHaveBeenCalledTimes(1));
+    expect(copyLink.mock.calls[0][0]).not.toBe(oldUrl);
+    await store.plugin.connectNotion(other);
+    expect(copies.map((button) => button.hidden)).toEqual([true, false]);
+    copies[1].click();
+    await vi.waitFor(() => expect(copyLink).toHaveBeenCalledTimes(2));
+    expect(copyLink.mock.calls[1][0]).toBe(store.plugin.notionConnectionUrl(other));
+  });
+
+  it.each(['completed', 'denied', 'unloaded', 'removed'])('hides Copy link for a %s attempt', async (outcome) => {
+    const store = await setup();
+    const { tab, button } = store.showSettings();
+    await store.plugin.connectNotion(store.profile);
+    const copy = button('Copy link');
+    expect(copy.hidden).toBe(false);
+    if (outcome === 'completed') store.callback({ state, handoff });
+    if (outcome === 'denied') store.callback({ state, error: 'denied' });
+    if (outcome === 'unloaded') store.plugin.unload();
+    if (outcome === 'removed') {
+      store.plugin.settings.profiles = [];
+      tab.display();
+      expect(copy.isConnected).toBe(false);
+    } else {
+      await vi.waitFor(() => expect(copy.hidden).toBe(true));
+    }
+    expect(store.plugin.notionConnectionUrl(store.profile)).toBe('');
+    copy.click();
+    expect(copyLink).not.toHaveBeenCalled();
+    if (outcome === 'completed') await vi.waitFor(() => expect(store.saved).toHaveBeenCalledTimes(1));
+  });
+
+  it('reports clipboard failure without losing the active link or starting another connection', async () => {
+    const store = await setup();
+    const { tab, button } = store.showSettings();
+    await store.plugin.connectNotion(store.profile);
+    copyLink.mockRejectedValueOnce(new Error('Permission denied'));
+    button('Copy link').click();
+    await vi.waitFor(() => expect(tab.containerEl.textContent).toContain('Check clipboard permissions'));
+    expect(button('Copy link').hidden).toBe(false);
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+    expect(store.saved).not.toHaveBeenCalled();
+  });
+
+  it('hiding settings cancels copied feedback and restores the active link on reopening', async () => {
+    vi.useFakeTimers();
+    const store = await setup();
+    const { tab, button } = store.showSettings();
+    await store.plugin.connectNotion(store.profile);
+    const copy = button('Copy link');
+    copy.click();
+    await vi.waitFor(() => expect(copy.textContent).toBe('Copied'));
+    tab.hide();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(copy.hidden).toBe(true);
+    tab.display();
+    expect(button('Copy link').hidden).toBe(false);
+  });
+
   it('shows an undeployed service error inline, without opening a browser or rewriting settings', async () => {
     const store = await setup();
     vi.mocked(requestUrl).mockResolvedValueOnce(jsonResponse({ error: 'Notion sign-in is not configured yet.' }, 503));
@@ -194,5 +332,7 @@ describe('Notion OAuth connection', () => {
     expect(window.open).not.toHaveBeenCalled();
     expect(store.saved).not.toHaveBeenCalled();
     expect(button.disabled).toBe(false);
+    expect(Array.from(tab.containerEl.querySelectorAll('button')).find((button) => button.textContent === 'Copy link')?.hidden).toBe(true);
+    expect(store.plugin.notionConnectionUrl(store.profile)).toBe('');
   });
 });

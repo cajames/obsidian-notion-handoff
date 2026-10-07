@@ -7,9 +7,20 @@ import { readParentPage } from './notion-pages';
 import { pickParentPage } from './page-picker';
 
 export default class HandoffSettings extends PluginSettingTab {
-  constructor(private plugin: NotionHandoff) { super(plugin.app, plugin); }
+  private stopWatchingConnection = () => {};
+
+  constructor(private plugin: NotionHandoff) {
+    super(plugin.app, plugin);
+    plugin.register(() => { this.hide(); });
+  }
+
+  hide() {
+    this.stopWatchingConnection();
+    this.containerEl.querySelectorAll('.nh-copy-link').forEach((button) => button.setAttribute('hidden', ''));
+  }
 
   display() {
+    this.stopWatchingConnection();
     const { containerEl } = this;
     containerEl.empty();
     containerEl.classList.add('notion-handoff-settings');
@@ -25,7 +36,7 @@ export default class HandoffSettings extends PluginSettingTab {
     });
     workspaces.createEl('p', { cls: 'nh-section-description', text: 'Separate connections for work and clients.' });
     const profiles = workspaces.createDiv({ cls: 'nh-profiles' });
-    this.plugin.settings.profiles.forEach((profile, index) => {
+    const refreshConnections = this.plugin.settings.profiles.map((profile, index) => {
       const card = profiles.createEl('details', { cls: 'nh-profile' });
       card.open = index === 0 || !profile.token.trim();
       const summary = card.createEl('summary', { cls: 'nh-profile-heading' });
@@ -51,8 +62,8 @@ export default class HandoffSettings extends PluginSettingTab {
       }
       const fields = card.createDiv({ cls: 'nh-profile-fields' });
       const status = fields.createEl('p', { cls: 'nh-connection-status', attr: { id: `notion-handoff-connection-${index}`, role: 'status', 'aria-live': 'polite' } });
-      const clearStatus = () => { status.hidden = true; };
-      clearStatus();
+      status.hidden = true;
+      const clearStatus = () => { status.hidden = true; refreshCopy(); };
       const refreshName = () => {
         title.setText(profile.name.trim() || 'Unnamed workspace');
         const name = profile.name.trim() || 'unnamed workspace';
@@ -60,6 +71,7 @@ export default class HandoffSettings extends PluginSettingTab {
         card.querySelector('.nh-move-up')?.setAttribute('aria-label', `Move ${name} up`);
         card.querySelector('.nh-move-down')?.setAttribute('aria-label', `Move ${name} down`);
         card.querySelector('.nh-connect-notion')?.setAttribute('aria-label', `Connect ${name} to Notion`);
+        card.querySelector('.nh-copy-link')?.setAttribute('aria-label', `Copy Notion authorization link for ${name}`);
         card.querySelector('.nh-test-connection')?.setAttribute('aria-label', `Test connection for ${name}`);
         card.querySelector('.nh-choose-parent')?.setAttribute('aria-label', `Choose parent page for ${name}`);
       };
@@ -75,26 +87,50 @@ export default class HandoffSettings extends PluginSettingTab {
             await this.plugin.saveData(this.plugin.settings);
           });
         });
-      new Setting(fields).setName('Connect to Notion').setDesc('Authorize this workspace in your browser. Select the pages you want to share.')
-        .addButton((button) => {
-          button.setButtonText('Connect to Notion').setCta();
-          button.buttonEl.classList.add('nh-connect-notion');
-          button.onClick(async () => {
-            button.setDisabled(true);
-            status.setText('Starting Notion authorization…');
-            status.hidden = false;
-            try {
-              await this.plugin.connectNotion(profile);
-              if (!card.isConnected) return;
-              status.setText('Complete authorization in your browser, then choose Open Obsidian.');
-              status.dataset.state = 'success';
-            } catch (error) {
-              if (!card.isConnected) return;
-              status.setText(error instanceof Error ? error.message : 'Notion connection failed.');
-              status.dataset.state = 'error';
-            } finally { button.setDisabled(false); }
-          });
-        });
+      const connect = new Setting(fields).setClass('nh-connect-setting').setName('Connect to Notion')
+        .setDesc('Authorize this workspace in your browser. Select the pages you want to share.');
+      const connectActions = connect.controlEl.createDiv({ cls: 'nh-connect-buttons' });
+      const button = new ButtonComponent(connectActions).setButtonText('Connect to Notion').setCta();
+      button.buttonEl.classList.add('nh-connect-notion');
+      const copy = new ButtonComponent(connectActions).setButtonText('Copy link');
+      copy.buttonEl.classList.add('nh-copy-link');
+      const refreshCopy = () => {
+        copy.buttonEl.hidden = !this.plugin.notionConnectionUrl(profile);
+        copy.setButtonText('Copy link');
+      };
+      refreshCopy();
+      let copiedTimer = 0;
+      copy.onClick(async () => {
+        const url = this.plugin.notionConnectionUrl(profile);
+        if (!url) { refreshCopy(); return; }
+        try {
+          await navigator.clipboard.writeText(url);
+          if (!card.isConnected || this.plugin.notionConnectionUrl(profile) !== url) return;
+          copy.setButtonText('Copied');
+          window.clearTimeout(copiedTimer);
+          copiedTimer = window.setTimeout(refreshCopy, 2000);
+        } catch {
+          if (!card.isConnected || this.plugin.notionConnectionUrl(profile) !== url) return;
+          status.setText('Could not copy the link. Check clipboard permissions and try again.');
+          status.dataset.state = 'error';
+          status.hidden = false;
+        }
+      });
+      button.onClick(async () => {
+        button.setDisabled(true);
+        status.setText('Starting Notion authorization…');
+        status.hidden = false;
+        try {
+          await this.plugin.connectNotion(profile);
+          if (!card.isConnected || !this.plugin.notionConnectionUrl(profile)) return;
+          status.setText('Complete authorization in your browser, then choose Open Obsidian.');
+          status.dataset.state = 'success';
+        } catch (error) {
+          if (!card.isConnected) return;
+          status.setText(error instanceof Error ? error.message : 'Notion connection failed.');
+          status.dataset.state = 'error';
+        } finally { button.setDisabled(false); }
+      });
       new Setting(fields).setName('Notion access token').setDesc('Integration token or OAuth access token.')
         .addText((input) => {
           input.inputEl.type = 'password';
@@ -174,6 +210,7 @@ export default class HandoffSettings extends PluginSettingTab {
           if (!current()) return;
           const previous = profile.parentId;
           profile.parentId = parentId = page.id;
+          refreshCopy();
           updateParent(page.id);
           try { await this.plugin.saveData(this.plugin.settings); }
           catch (error) {
@@ -203,7 +240,15 @@ export default class HandoffSettings extends PluginSettingTab {
         });
       remove.buttonEl.classList.add('nh-remove-profile');
       refreshName();
+      return { refresh: refreshCopy, dispose: () => window.clearTimeout(copiedTimer) };
     });
+    const stopWatching = this.plugin.onNotionConnectionChange(() => {
+      refreshConnections.forEach(({ refresh }) => refresh());
+    });
+    this.stopWatchingConnection = () => {
+      stopWatching();
+      refreshConnections.forEach(({ dispose }) => dispose());
+    };
     workspaces.createEl('p', { cls: 'nh-footnote', text: 'Tokens are stored in plain plugin settings. Protect your vault.' });
 
     const images = containerEl.createDiv({ cls: 'nh-section' });

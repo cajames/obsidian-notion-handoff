@@ -114,6 +114,21 @@ export const uiStyles = `
   min-height: 36px;
   font-size: var(--font-ui-small, 14px);
 }
+.notion-handoff-settings .nh-connect-setting .setting-item-control { justify-content: flex-end; }
+.notion-handoff-settings .nh-connect-buttons { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.notion-handoff-settings .nh-copy-link {
+  min-width: 72px;
+  min-height: 24px;
+  height: auto;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  cursor: pointer;
+}
+.notion-handoff-settings .nh-copy-link:hover { background: transparent; color: var(--text-normal); text-decoration: underline; }
 .notion-handoff-settings .nh-parent-setting .setting-item-control { flex-basis: 70%; }
 .notion-handoff-settings .nh-connection-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .notion-handoff-settings .nh-connection-status { margin: 0 0 10px; padding: 0; color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); line-height: 1.5; overflow-wrap: anywhere; }

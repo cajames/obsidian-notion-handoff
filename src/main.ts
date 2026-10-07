@@ -32,8 +32,10 @@ export default class NotionHandoff extends Plugin {
   private noteLinks = parseNoteLinks('{}');
   private oauthAttempt = {
     profile: EMPTY_PROFILE, name: '', token: '', parentId: '',
-    state: '', verifier: '', expires: 0, busy: false,
+    state: '', verifier: '', authorizeUrl: '', expires: 0, busy: false,
   };
+  private oauthExpiry = 0;
+  private oauthChanges = new EventTarget();
 
   async onload() {
     const style = document.createElement('style');
@@ -63,7 +65,7 @@ export default class NotionHandoff extends Plugin {
       void this.finishNotionConnection({ state: params.state ?? '', handoff: params.handoff ?? '', error: params.error ?? '' })
         .then((connected) => { if (connected) settingsTab.display(); });
     });
-    this.register(() => { this.oauthAttempt.state = ''; this.oauthAttempt.verifier = ''; });
+    this.register(() => { this.clearNotionConnection(); });
     this.addCommand({
       id: 'push-to-notion',
       name: 'Push to Notion',
@@ -84,22 +86,44 @@ export default class NotionHandoff extends Plugin {
   async connectNotion(profile = this.settings.profiles[0]) {
     if (!this.settings.profiles.includes(profile)) throw new Error('Workspace profile was removed.');
     if (!profile.name.trim()) throw new Error('Give this workspace a name first.');
+    this.clearNotionConnection();
     const state = randomId() + randomId();
     const verifier = randomId() + randomId();
     const attempt = {
       profile, name: profile.name, token: profile.token, parentId: profile.parentId,
-      state, verifier, expires: Date.now() + 10 * 60 * 1000, busy: false,
+      state, verifier, authorizeUrl: '', expires: Date.now() + 10 * 60 * 1000, busy: false,
     };
     this.oauthAttempt = attempt;
     try {
       const result = await oauthRequest('start', { state, challenge: oauthChallenge(verifier) });
       if (!this.currentOAuthAttempt(attempt)) throw new Error('Workspace settings changed. Start a new connection.');
       if (typeof result?.authorizeUrl !== 'string') throw new Error('Connection service returned no authorization URL.');
-      window.open(authorizationUrl(result.authorizeUrl, state), '_blank', 'noopener,noreferrer');
+      attempt.authorizeUrl = authorizationUrl(result.authorizeUrl, state);
+      window.open(attempt.authorizeUrl, '_blank', 'noopener,noreferrer');
+      this.oauthExpiry = window.setTimeout(() => { this.clearNotionConnection(attempt); }, attempt.expires - Date.now());
+      this.oauthChanges.dispatchEvent(new Event('change'));
     } catch (error) {
-      if (this.oauthAttempt === attempt) { attempt.state = ''; attempt.verifier = ''; }
+      this.clearNotionConnection(attempt);
       throw error;
     }
+  }
+
+  notionConnectionUrl(profile = this.settings.profiles[0]) {
+    const attempt = this.oauthAttempt;
+    if (attempt.profile !== profile || attempt.busy || !this.currentOAuthAttempt(attempt)) return '';
+    return attempt.authorizeUrl;
+  }
+
+  onNotionConnectionChange(callback = () => {}) {
+    this.oauthChanges.addEventListener('change', callback);
+    return () => this.oauthChanges.removeEventListener('change', callback);
+  }
+
+  private clearNotionConnection(attempt = this.oauthAttempt) {
+    attempt.state = ''; attempt.verifier = ''; attempt.authorizeUrl = '';
+    if (this.oauthAttempt !== attempt) return;
+    window.clearTimeout(this.oauthExpiry);
+    this.oauthChanges.dispatchEvent(new Event('change'));
   }
 
   private currentOAuthAttempt(attempt = this.oauthAttempt) {
@@ -112,11 +136,12 @@ export default class NotionHandoff extends Plugin {
     const attempt = this.oauthAttempt;
     if (!params.state || params.state !== attempt.state || attempt.busy) return false;
     if (!this.currentOAuthAttempt(attempt)) {
-      attempt.state = ''; attempt.verifier = '';
+      this.clearNotionConnection(attempt);
       new Notice('Notion connection expired or workspace settings changed. Connect again.');
       return false;
     }
     attempt.busy = true;
+    this.oauthChanges.dispatchEvent(new Event('change'));
     try {
       if (params.error) throw new Error(params.error === 'denied' ? 'Notion authorization cancelled.' : 'Notion authorization failed. Connect again.');
       if (!/^[a-f0-9]{64}$/.test(params.handoff ?? '')) throw new Error('Invalid Notion handoff. Connect again.');
@@ -146,7 +171,8 @@ export default class NotionHandoff extends Plugin {
       new Notice(`Connect to Notion: ${error instanceof Error ? error.message : 'Connection failed.'}`, 10000);
       return false;
     } finally {
-      attempt.state = ''; attempt.verifier = ''; attempt.busy = false;
+      attempt.busy = false;
+      this.clearNotionConnection(attempt);
     }
   }
 
